@@ -3,6 +3,9 @@ image_optimizer.py — Kompresja i optymalizacja grafik.
 
 Wykrywa ciężkie pliki i duże rozdzielczości,
 kompresuje/skaluje przed eksportem do OneDrive.
+
+Obsługuje zarówno polskie jak i angielskie nazwy kolumn
+(po normalize_columns w app.py kolumny mają nazwy angielskie).
 """
 
 from __future__ import annotations
@@ -24,7 +27,6 @@ logger = logging.getLogger(__name__)
 class OptimizationConfig:
     """Parametry kompresji — wszystko konfigurowalne z UI."""
 
-    # Włączenie/wyłączenie
     enabled: bool = True
 
     # Progi rozdzielczości (px)
@@ -47,7 +49,7 @@ class OptimizationConfig:
     convert_bmp_to_jpeg: bool = True
     convert_tiff_to_jpeg: bool = True
     convert_png_to_jpeg_if_no_alpha: bool = False
-    convert_webp_to_png: bool = False  # ← NOWE
+    convert_webp_to_png: bool = False
 
     # Format docelowy dla konwersji BMP/TIFF (jpeg/webp)
     conversion_target: str = "jpeg"
@@ -114,7 +116,7 @@ PRESETS: dict[str, OptimizationConfig] = {
         strip_metadata=True,
         convert_bmp_to_jpeg=True,
         convert_tiff_to_jpeg=True,
-        convert_webp_to_png=True,   # ← WebP→PNG włączone
+        convert_webp_to_png=True,
         sharpen_after_resize=True,
         progressive_jpeg=True,
     ),
@@ -147,9 +149,7 @@ class OptimizationResult:
     def size_reduction_pct(self) -> float:
         if self.original_size_bytes == 0:
             return 0.0
-        return (
-            (1 - self.optimized_size_bytes / self.original_size_bytes) * 100
-        )
+        return (1 - self.optimized_size_bytes / self.original_size_bytes) * 100
 
     @property
     def size_saved_kb(self) -> float:
@@ -192,6 +192,28 @@ _RESAMPLE_METHODS = {
 }
 
 
+# ── Column name helpers ────────────────────────────────────────────────────
+
+def _get_col(row: pd.Series, *candidates: str, default: Any = None) -> Any:
+    """
+    Get value from a row trying multiple candidate column names.
+    Supports both Polish and English column names.
+    """
+    for col in candidates:
+        val = row.get(col)
+        if val is not None:
+            return val
+    return default
+
+
+def _find_col(df: pd.DataFrame, *candidates: str) -> Optional[str]:
+    """Return the first candidate column name that exists in df."""
+    for col in candidates:
+        if col in df.columns:
+            return col
+    return None
+
+
 # ── Rdzeń optymalizacji ───────────────────────────────────────────────────
 
 def _needs_optimization(
@@ -223,11 +245,9 @@ def _needs_optimization(
 def _has_alpha(img: Image.Image) -> bool:
     """Sprawdza czy obraz używa kanału alpha (przezroczystość)."""
     if img.mode in ("RGBA", "LA", "PA"):
-        # Sprawdź czy alpha jest faktycznie używany
         if img.mode == "RGBA":
             alpha = img.getchannel("A")
             extrema = alpha.getextrema()
-            # Jeśli min alpha < 255, obraz ma przezroczystość
             return extrema[0] < 255
         return True
     return False
@@ -243,7 +263,6 @@ def _resize_image(
     if width <= config.max_width and height <= config.max_height:
         return img, False
 
-    # Oblicz skalę zachowując proporcje
     ratio_w = config.max_width / width
     ratio_h = config.max_height / height
     ratio = min(ratio_w, ratio_h)
@@ -251,22 +270,15 @@ def _resize_image(
     new_width = int(width * ratio)
     new_height = int(height * ratio)
 
-    resample = _RESAMPLE_METHODS.get(
-        config.resample_method, Image.LANCZOS
-    )
-
+    resample = _RESAMPLE_METHODS.get(config.resample_method, Image.LANCZOS)
     resized = img.resize((new_width, new_height), resample)
 
-    # Opcjonalne wyostrzanie po skalowaniu
     if config.sharpen_after_resize:
         resized = resized.filter(ImageFilter.UnsharpMask(
             radius=1.0, percent=30, threshold=2,
         ))
 
-    logger.debug(
-        "Resize: %dx%d → %dx%d (ratio=%.2f)",
-        width, height, new_width, new_height, ratio,
-    )
+    logger.debug("Resize: %dx%d → %dx%d", width, height, new_width, new_height)
     return resized, True
 
 
@@ -279,11 +291,9 @@ def _determine_output_format(
     """Określa docelowy format wyjściowy."""
     fmt = original_format.upper()
 
-    # WebP → PNG (priorytet — e-commerce potrzebuje PNG)
     if needs.get("convert_webp"):
         return "PNG"
 
-    # BMP/TIFF/PNG(bez alpha) → JPEG lub WebP
     if (
         needs.get("convert_bmp")
         or needs.get("convert_tiff")
@@ -294,7 +304,6 @@ def _determine_output_format(
             return "WEBP"
         return "JPEG"
 
-    # Zachowaj oryginalny format
     if fmt in ("JPEG", "JPG"):
         return "JPEG"
     if fmt == "PNG":
@@ -316,9 +325,7 @@ def _save_optimized(
     """Zapisuje obraz z optymalnymi parametrami."""
     buffer = io.BytesIO()
 
-    # Konwertuj tryb koloru jeśli potrzeba
     if output_format == "JPEG" and img.mode in ("RGBA", "LA", "P", "PA"):
-        # JPEG nie obsługuje przezroczystości — dodaj białe tło
         background = Image.new("RGB", img.size, (255, 255, 255))
         if img.mode == "P":
             img = img.convert("RGBA")
@@ -334,7 +341,6 @@ def _save_optimized(
         save_kwargs["optimize"] = True
         if config.progressive_jpeg:
             save_kwargs["progressive"] = True
-        # Subsampling: 4:2:0 dla mniejszego pliku, 4:4:4 dla jakości
         save_kwargs["subsampling"] = "4:2:0" if config.jpeg_quality < 90 else "4:4:4"
 
     elif output_format == "PNG":
@@ -343,16 +349,13 @@ def _save_optimized(
 
     elif output_format == "WEBP":
         save_kwargs["quality"] = config.webp_quality
-        save_kwargs["method"] = 4  # 0-6, wyższy = lepsza kompresja ale wolniej
+        save_kwargs["method"] = 4
 
     img.save(buffer, format=output_format, **save_kwargs)
     result = buffer.getvalue()
 
-    # Jeśli nadal za duży i mamy target — iteracyjna redukcja jakości
     if target_size_kb and len(result) / 1024 > target_size_kb:
-        result = _iterative_compress(
-            img, output_format, target_size_kb, config
-        )
+        result = _iterative_compress(img, output_format, target_size_kb, config)
 
     return result
 
@@ -366,7 +369,6 @@ def _iterative_compress(
 ) -> bytes:
     """Iteracyjnie zmniejsza jakość aż do osiągnięcia target size."""
     if output_format not in ("JPEG", "WEBP"):
-        # PNG — nie da się iteracyjnie kompresować jakością
         buffer = io.BytesIO()
         img.save(buffer, format=output_format, optimize=True)
         return buffer.getvalue()
@@ -374,7 +376,7 @@ def _iterative_compress(
     quality = config.jpeg_quality if output_format == "JPEG" else config.webp_quality
     best_result = None
 
-    for step in range(10):  # Max 10 iteracji
+    for step in range(10):
         quality = max(min_quality, quality - 5 * (step + 1))
 
         buffer = io.BytesIO()
@@ -391,19 +393,11 @@ def _iterative_compress(
         best_result = result
 
         if len(result) / 1024 <= target_size_kb:
-            logger.debug(
-                "Iterative compress: quality=%d → %.1f KB (target=%d KB)",
-                quality, len(result) / 1024, target_size_kb,
-            )
             return result
 
         if quality <= min_quality:
             break
 
-    logger.warning(
-        "Nie udało się osiągnąć target %d KB (wynik: %.1f KB, quality=%d)",
-        target_size_kb, len(best_result) / 1024, quality,
-    )
     return best_result
 
 
@@ -429,11 +423,6 @@ def optimize_single_image(
     """
     Optymalizuje pojedynczy obraz.
 
-    Args:
-        raw_bytes: Surowe bajty obrazu.
-        ean: Kod EAN (do logów i wyników).
-        config: Konfiguracja optymalizacji.
-
     Returns:
         (optimized_bytes, new_extension, result)
     """
@@ -452,7 +441,6 @@ def optimize_single_image(
         return raw_bytes, "", result
 
     try:
-        # Otwórz obraz
         img = Image.open(io.BytesIO(raw_bytes))
         original_format = (img.format or "JPEG").upper()
         width, height = img.size
@@ -461,10 +449,8 @@ def optimize_single_image(
         result.original_height = height
         result.original_format = original_format
 
-        # Sprawdź co wymaga optymalizacji
         needs = _needs_optimization(img, raw_bytes, config)
 
-        # Za mały obraz — nie ruszaj
         if needs["too_small"]:
             result.skipped = True
             result.skip_reason = (
@@ -477,7 +463,6 @@ def optimize_single_image(
             result.optimized_format = original_format
             return raw_bytes, "", result
 
-        # GIF animowany — nie ruszaj (utrata animacji)
         if original_format == "GIF" and getattr(img, "is_animated", False):
             result.skipped = True
             result.skip_reason = "Animowany GIF — pominięto"
@@ -489,11 +474,8 @@ def optimize_single_image(
 
         any_needed = any(
             needs[k]
-            for k in (
-                "resize", "compress", "convert_bmp",
-                "convert_tiff", "convert_png", "convert_webp",
-                "strip",
-            )
+            for k in ("resize", "compress", "convert_bmp",
+                       "convert_tiff", "convert_png", "convert_webp", "strip")
         )
 
         if not any_needed:
@@ -505,43 +487,28 @@ def optimize_single_image(
             result.optimized_format = original_format
             return raw_bytes, "", result
 
-        # ── Resize ──
         if needs["resize"]:
             img, was_resized = _resize_image(img, config)
             result.was_resized = was_resized
 
         result.optimized_width, result.optimized_height = img.size
 
-        # ── Określ format wyjściowy ──
-        output_format = _determine_output_format(
-            img, original_format, needs, config
-        )
+        output_format = _determine_output_format(img, original_format, needs, config)
         result.optimized_format = output_format
         result.was_converted = output_format != original_format
 
-        # ── Strip metadata ──
         if needs["strip"]:
             result.was_stripped = True
-            # Pillow domyślnie nie kopiuje EXIF przy save (chyba że podamy exif=)
-            # Więc wystarczy nie przekazywać info= ani exif=
 
-        # ── Compress & Save ──
         target_kb = config.max_file_size_kb if needs["compress"] else None
-        optimized_bytes = _save_optimized(
-            img, output_format, config, target_size_kb=target_kb
-        )
+        optimized_bytes = _save_optimized(img, output_format, config, target_size_kb=target_kb)
 
         result.optimized_size_bytes = len(optimized_bytes)
         result.was_compressed = len(optimized_bytes) < len(raw_bytes)
 
-        # Jeśli optymalizacja powiększyła plik — zwróć oryginał
         if len(optimized_bytes) >= len(raw_bytes) and not result.was_converted:
             logger.debug(
-                "EAN %s: optymalizacja powiększyła plik "
-                "(%.1f KB → %.1f KB) — zachowuję oryginał",
-                ean,
-                len(raw_bytes) / 1024,
-                len(optimized_bytes) / 1024,
+                "EAN %s: optymalizacja powiększyła plik — zachowuję oryginał", ean
             )
             result.optimized_size_bytes = len(raw_bytes)
             result.was_compressed = False
@@ -553,7 +520,7 @@ def optimize_single_image(
         new_ext = _FORMAT_TO_EXT.get(output_format, ".jpg")
 
         logger.info(
-            "EAN %s: %dx%d→%dx%d, %.1f KB→%.1f KB (-%0.f%%), %s→%s",
+            "EAN %s: %dx%d→%dx%d, %.1f KB→%.1f KB (-%.0f%%), %s→%s",
             ean,
             result.original_width, result.original_height,
             result.optimized_width, result.optimized_height,
@@ -582,25 +549,13 @@ def optimize_dataframe(
     """
     Optymalizuje wszystkie obrazy w DataFrame.
 
-    Modyfikuje kolumny:
-    - _image_bytes → zoptymalizowane bajty
-    - rozmiar → nowy rozmiar
-    - rozdzielczość → nowa rozdzielczość
-    - rozszerzenie → nowe rozszerzenie (jeśli konwersja)
+    Obsługuje zarówno angielskie kolumny (po normalize_columns):
+      resolution, file_size, extension
+    jak i polskie (legacy):
+      rozdzielczość, rozmiar, rozszerzenie
 
-    Dodaje kolumny:
+    Modyfikuje kolumny po optymalizacji oraz dodaje:
     - _was_optimized (bool)
-    - _size_before (str)
-    - _size_after (str)
-    - _optimization_info (str)
-
-    Args:
-        df: DataFrame z kolumną _image_bytes.
-        config: Konfiguracja optymalizacji.
-        progress_callback: Opcjonalny callback (done, total).
-
-    Returns:
-        (zmodyfikowany_df, summary)
     """
     if config is None:
         config = OptimizationConfig()
@@ -611,20 +566,24 @@ def optimize_dataframe(
 
     if not config.enabled:
         logger.info("Optymalizacja wyłączona — pomijam.")
+        df = df.copy()
+        df["_was_optimized"] = False
         return df, summary
 
     has_bytes = "_image_bytes" in df.columns
 
-    # Nowe kolumny
+    # Detect which column names exist (English after normalize_columns, or Polish legacy)
+    col_status = _find_col(df, "status")
+    col_ean = _find_col(df, "ean")
+    col_resolution = _find_col(df, "resolution", "rozdzielczość")
+    col_file_size = _find_col(df, "file_size", "rozmiar")
+    col_extension = _find_col(df, "extension", "rozszerzenie")
+
     df = df.copy()
     df["_was_optimized"] = False
-    df["_size_before"] = ""
-    df["_size_after"] = ""
-    df["_optimization_info"] = ""
 
     for i, (idx, row) in enumerate(df.iterrows()):
-        # Pomiń wiersze bez obrazu
-        status = str(row.get("status", ""))
+        status = str(row.get(col_status, "")) if col_status else ""
         if status != "OK":
             summary.skipped += 1
             if progress_callback:
@@ -641,9 +600,8 @@ def optimize_dataframe(
                 progress_callback(i + 1, total)
             continue
 
-        ean = str(row.get("ean", ""))
+        ean = str(row.get(col_ean, "")) if col_ean else ""
 
-        # Optymalizuj
         optimized_bytes, new_ext, result = optimize_single_image(
             raw_bytes, ean=ean, config=config
         )
@@ -666,45 +624,24 @@ def optimize_dataframe(
             if result.was_converted:
                 summary.converted_count += 1
 
-            # Aktualizuj DataFrame
+            # Update DataFrame with optimized bytes
             df.at[idx, "_image_bytes"] = optimized_bytes
             df.at[idx, "_was_optimized"] = True
 
-            # Aktualizuj metadane
+            # Update metadata columns (use whichever column name exists)
             size_kb = len(optimized_bytes) / 1024
-            df.at[idx, "rozmiar"] = (
-                f"{size_kb:.1f} KB"
-                if size_kb < 1024
+            size_str = (
+                f"{size_kb:.1f} KB" if size_kb < 1024
                 else f"{size_kb / 1024:.2f} MB"
             )
-            df.at[idx, "rozdzielczość"] = (
-                f"{result.optimized_width}×{result.optimized_height}"
-            )
+            res_str = f"{result.optimized_width}×{result.optimized_height}"
 
-            if new_ext and result.was_converted:
-                df.at[idx, "rozszerzenie"] = new_ext.lstrip(".").upper()
-
-        # Info kolumny
-        before_kb = result.original_size_bytes / 1024
-        after_kb = result.optimized_size_bytes / 1024
-        df.at[idx, "_size_before"] = f"{before_kb:.1f} KB"
-        df.at[idx, "_size_after"] = f"{after_kb:.1f} KB"
-
-        info_parts = []
-        if result.was_resized:
-            info_parts.append(
-                f"Resize {result.original_width}×{result.original_height}"
-                f"→{result.optimized_width}×{result.optimized_height}"
-            )
-        if result.was_compressed:
-            info_parts.append(f"-{result.size_reduction_pct:.0f}%")
-        if result.was_converted:
-            info_parts.append(
-                f"{result.original_format}→{result.optimized_format}"
-            )
-        if result.skipped:
-            info_parts.append(result.skip_reason)
-        df.at[idx, "_optimization_info"] = " | ".join(info_parts) or "—"
+            if col_file_size:
+                df.at[idx, col_file_size] = size_str
+            if col_resolution:
+                df.at[idx, col_resolution] = res_str
+            if new_ext and result.was_converted and col_extension:
+                df.at[idx, col_extension] = new_ext.lstrip(".").upper()
 
         if progress_callback:
             progress_callback(i + 1, total)
@@ -712,11 +649,8 @@ def optimize_dataframe(
     logger.info(
         "Optymalizacja zakończona: %d zoptymalizowanych, %d pominiętych, "
         "%d błędów. Oszczędność: %.1f KB (%.1f%%)",
-        summary.optimized,
-        summary.skipped,
-        summary.errors,
-        summary.total_saved_kb,
-        summary.total_saved_pct,
+        summary.optimized, summary.skipped, summary.errors,
+        summary.total_saved_kb, summary.total_saved_pct,
     )
 
     return df, summary

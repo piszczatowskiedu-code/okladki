@@ -52,6 +52,11 @@ COL_FILE_SIZE = "file_size"
 COL_EXTENSION = "extension"
 COL_ERROR = "error"
 
+# Before-optimization column names
+COL_RESOLUTION_BEFORE = "_resolution_before"
+COL_FILE_SIZE_BEFORE = "_file_size_before"
+COL_EXTENSION_BEFORE = "_extension_before"
+
 DISPLAY_LABELS = {
     COL_NAME: "Nazwa produktu",
     COL_RESOLUTION: "Rozdzielczość",
@@ -114,13 +119,6 @@ def get_state() -> AppState:
 
 # ── Validation helpers ────────────────────────────────────────────────────
 def validate_ean(code: str, strict: bool = False) -> bool:
-    """Waliduje kod EAN.
-
-    Args:
-        code: Kod do sprawdzenia.
-        strict: Jeśli True, weryfikuje cyfrę kontrolną.
-                Jeśli False, sprawdza tylko format (same cyfry, prawidłowa długość).
-    """
     if not re.fullmatch(r"\d{8}|\d{13}|\d{14}", code):
         return False
     if not strict:
@@ -134,10 +132,6 @@ def validate_ean(code: str, strict: bool = False) -> bool:
 
 
 def parse_eans(raw: str, strict: bool = False) -> tuple[list[str], list[str]]:
-    """Parse, deduplicate, and validate EAN codes.
-
-    Returns (valid_eans, invalid_lines).
-    """
     seen: set[str] = set()
     valid: list[str] = []
     invalid: list[str] = []
@@ -154,7 +148,6 @@ def parse_eans(raw: str, strict: bool = False) -> tuple[list[str], list[str]]:
 
 
 def sanitize_url(url: str) -> str:
-    """Allow only http/https URLs, HTML-escape the result."""
     if not url:
         return ""
     parsed = urlparse(url)
@@ -164,7 +157,6 @@ def sanitize_url(url: str) -> str:
 
 
 def user_error_message(exc: Exception) -> str:
-    """Return a user-friendly message; hide internals."""
     for exc_type, msg in _USER_ERRORS.items():
         if isinstance(exc, exc_type):
             return msg
@@ -172,7 +164,6 @@ def user_error_message(exc: Exception) -> str:
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename legacy Polish column names to English equivalents."""
     return df.rename(columns=_LEGACY_COLUMN_MAP)
 
 
@@ -184,6 +175,7 @@ class AnalysisStats:
     errors: int
     accepted: int
     missing: int
+    optimized: int
 
 
 def compute_stats(df: pd.DataFrame, rejected_eans: set[str]) -> AnalysisStats:
@@ -192,10 +184,20 @@ def compute_stats(df: pd.DataFrame, rejected_eans: set[str]) -> AnalysisStats:
     missing = int((df[COL_STATUS] == "brak obrazu").sum())
     errors = total - ok - missing
     accepted = len(df[~df[COL_EAN].isin(rejected_eans)])
-    return AnalysisStats(total=total, ok=ok, errors=errors, accepted=accepted, missing=missing)
+    optimized = int(df.get("_was_optimized", pd.Series(False)).sum()) if "_was_optimized" in df.columns else 0
+    return AnalysisStats(total=total, ok=ok, errors=errors, accepted=accepted, missing=missing, optimized=optimized)
 
 
 def render_stats_html(s: AnalysisStats) -> str:
+    optimized_box = ""
+    if s.optimized > 0:
+        optimized_box = f"""
+        <div class="stat-box purple">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-label">Zoptymalizowane</div>
+            <div class="stat-value purple">{s.optimized}</div>
+        </div>"""
+
     return f"""
     <div class="stat-row">
         <div class="stat-box blue">
@@ -223,21 +225,31 @@ def render_stats_html(s: AnalysisStats) -> str:
             <div class="stat-label">Zaakceptowane</div>
             <div class="stat-value">{s.accepted}</div>
         </div>
+        {optimized_box}
     </div>
     """
 
 
 # ── Product card renderer ─────────────────────────────────────────────────
 def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
-    """Generate safe HTML for a single product card."""
+    """Generate safe HTML for a single product card, showing before/after optimization."""
     status = str(row.get(COL_STATUS, ""))
     url = sanitize_url(str(row.get(COL_URL, "") or ""))
     ean = html_escape(str(row.get(COL_EAN, "")))
     name = html_escape(str(row.get(COL_NAME, "") or ""))
     err = html_escape(str(row.get(COL_ERROR, "") or ""))
+
+    # Current (after optimization) values
     resolution = html_escape(str(row.get(COL_RESOLUTION, "") or ""))
     file_size = html_escape(str(row.get(COL_FILE_SIZE, "") or ""))
     extension = html_escape(str(row.get(COL_EXTENSION, "") or ""))
+
+    # Before optimization values
+    resolution_before = html_escape(str(row.get(COL_RESOLUTION_BEFORE, "") or ""))
+    file_size_before = html_escape(str(row.get(COL_FILE_SIZE_BEFORE, "") or ""))
+    extension_before = html_escape(str(row.get(COL_EXTENSION_BEFORE, "") or ""))
+
+    was_optimized = bool(row.get("_was_optimized", False))
 
     # Status badge
     if status == "OK":
@@ -251,6 +263,9 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
         badge = "<span class='badge badge-err'>✗ BŁĄD</span>"
 
     rejected_class = "rejected" if is_rejected else ""
+
+    # Optimized badge
+    opt_badge = "<span class='badge badge-opt'>⚡ OPT</span>" if was_optimized else ""
 
     # Image area
     if status == "OK" and url:
@@ -273,17 +288,23 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
             "</div>"
         )
 
-    # Meta items
-    meta_parts: list[str] = []
-    if resolution:
-        meta_parts.append(f"<span class='card-meta-item'>📐 {resolution}</span>")
-    if file_size:
-        meta_parts.append(f"<span class='card-meta-item'>💾 {file_size}</span>")
-    if extension:
-        meta_parts.append(f"<span class='card-meta-item'>🗂 {extension}</span>")
-    meta_html = (
-        f"<div class='card-meta'>{''.join(meta_parts)}</div>" if meta_parts else ""
-    )
+    # Meta section — before/after if optimized, otherwise just current
+    if was_optimized and (resolution_before or file_size_before):
+        meta_html = _render_before_after_meta(
+            resolution_before, file_size_before, extension_before,
+            resolution, file_size, extension,
+        )
+    else:
+        meta_parts: list[str] = []
+        if resolution:
+            meta_parts.append(f"<span class='card-meta-item'>📐 {resolution}</span>")
+        if file_size:
+            meta_parts.append(f"<span class='card-meta-item'>💾 {file_size}</span>")
+        if extension:
+            meta_parts.append(f"<span class='card-meta-item'>🗂 {extension}</span>")
+        meta_html = (
+            f"<div class='card-meta'>{''.join(meta_parts)}</div>" if meta_parts else ""
+        )
 
     # Link button
     link_html = (
@@ -309,7 +330,7 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
         f"  <div class='card-body'>"
         f"    <div class='card-header'>"
         f"      <span class='card-ean'>{ean}</span>"
-        f"      {badge}"
+        f"      <div class='card-badges'>{badge}{opt_badge}</div>"
         f"    </div>"
         f"    {name_html}"
         f"    {meta_html}"
@@ -320,18 +341,188 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
     )
 
 
+def _render_before_after_meta(
+    res_before: str, size_before: str, ext_before: str,
+    res_after: str, size_after: str, ext_after: str,
+) -> str:
+    """Renders a compact before/after comparison table for image metadata."""
+    rows_html = ""
+
+    if res_before and res_after and res_before != res_after:
+        rows_html += (
+            f"<tr>"
+            f"<td class='meta-label'>📐 Rozdzielczość</td>"
+            f"<td class='meta-before'>{res_before}</td>"
+            f"<td class='meta-arrow'>→</td>"
+            f"<td class='meta-after'>{res_after}</td>"
+            f"</tr>"
+        )
+    elif res_after:
+        rows_html += (
+            f"<tr>"
+            f"<td class='meta-label'>📐 Rozdzielczość</td>"
+            f"<td class='meta-before' colspan='3'>{res_after}</td>"
+            f"</tr>"
+        )
+
+    if size_before and size_after and size_before != size_after:
+        rows_html += (
+            f"<tr>"
+            f"<td class='meta-label'>💾 Rozmiar</td>"
+            f"<td class='meta-before'>{size_before}</td>"
+            f"<td class='meta-arrow'>→</td>"
+            f"<td class='meta-after'>{size_after}</td>"
+            f"</tr>"
+        )
+    elif size_after:
+        rows_html += (
+            f"<tr>"
+            f"<td class='meta-label'>💾 Rozmiar</td>"
+            f"<td class='meta-before' colspan='3'>{size_after}</td>"
+            f"</tr>"
+        )
+
+    if ext_before and ext_after and ext_before != ext_after:
+        rows_html += (
+            f"<tr>"
+            f"<td class='meta-label'>🗂 Format</td>"
+            f"<td class='meta-before'>{ext_before}</td>"
+            f"<td class='meta-arrow'>→</td>"
+            f"<td class='meta-after'>{ext_after}</td>"
+            f"</tr>"
+        )
+    elif ext_after:
+        rows_html += (
+            f"<tr>"
+            f"<td class='meta-label'>🗂 Format</td>"
+            f"<td class='meta-before' colspan='3'>{ext_after}</td>"
+            f"</tr>"
+        )
+
+    if not rows_html:
+        return ""
+
+    return (
+        f"<div class='meta-comparison'>"
+        f"<table class='meta-table'>{rows_html}</table>"
+        f"</div>"
+    )
+
+
 # ── CSS loader ─────────────────────────────────────────────────────────────
 def load_css() -> None:
-    """Load CSS from external file, fall back to inline if file is missing."""
     if CSS_FILE.is_file():
         css_text = CSS_FILE.read_text(encoding="utf-8")
+        # Inject additional CSS for before/after meta
+        css_text += _EXTRA_CSS
     else:
         logger.warning(
             "CSS file not found at %s — using embedded fallback.", CSS_FILE
         )
-        css_text = _FALLBACK_CSS
+        css_text = _FALLBACK_CSS + _EXTRA_CSS
     st.markdown(f"<style>{css_text}</style>", unsafe_allow_html=True)
 
+
+# Additional CSS for new elements (appended to existing CSS)
+_EXTRA_CSS = """
+.card-badges {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.badge-opt {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+.stat-box.purple::before { background: linear-gradient(135deg, #6366f1, #a855f7); }
+.stat-value.purple { color: #a5b4fc; }
+
+.meta-comparison {
+    margin-bottom: 0.6rem;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 6px;
+    overflow: hidden;
+    padding: 0.4rem 0.5rem;
+}
+
+.meta-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.meta-table tr + tr td {
+    border-top: 1px solid rgba(255,255,255,0.05);
+    padding-top: 0.3rem;
+    margin-top: 0.3rem;
+}
+
+.meta-label {
+    color: var(--text-muted);
+    padding-right: 0.5rem;
+    white-space: nowrap;
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
+    width: 40%;
+}
+
+.meta-before {
+    color: #94a3b8;
+    text-decoration: line-through;
+    text-decoration-color: rgba(239, 68, 68, 0.5);
+    padding-right: 0.3rem;
+}
+
+.meta-arrow {
+    color: #6366f1;
+    padding: 0 0.3rem;
+    font-weight: 700;
+}
+
+.meta-after {
+    color: #10b981;
+    font-weight: 600;
+}
+
+/* Optimization config panel at top */
+.opt-config-panel {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.opt-config-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #a5b4fc;
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.opt-inline-badge {
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+}
+"""
 
 _FALLBACK_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
@@ -374,344 +565,176 @@ html, body, [class*="css"] {
 
 .stApp {
     background: var(--bg-primary);
-    background-image:
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
-        radial-gradient(ellipse 60% 30% at 80% 50%, rgba(139, 92, 246, 0.08), transparent),
-        radial-gradient(ellipse 50% 40% at 20% 80%, rgba(168, 85, 247, 0.05), transparent);
     min-height: 100vh;
 }
 
 #MainMenu, footer, header {visibility: hidden;}
 .stDeployButton {display: none;}
 
-.app-header {
-    padding: 2.5rem 0 2rem;
-    margin-bottom: 2rem;
-    position: relative;
-}
-.app-header::after {
-    content: '';
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, var(--border-primary) 20%, var(--accent-primary) 50%, var(--border-primary) 80%, transparent);
-}
+.app-header { padding-bottom: 2rem; margin-bottom: 2rem; position: relative; }
 .header-content { display: flex; align-items: center; gap: 1rem; }
-.header-icon {
-    width: 56px; height: 56px;
-    background: var(--accent-gradient);
-    border-radius: var(--radius-md);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.8rem;
-    box-shadow: var(--shadow-glow);
-}
-.header-text h1 {
-    font-family: 'Inter', sans-serif;
-    font-size: 1.75rem; font-weight: 800;
-    background: var(--accent-gradient);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.5px; margin: 0; line-height: 1.2;
-}
-.header-text p {
-    color: var(--text-secondary); font-size: 0.9rem;
-    font-weight: 400; margin: 0.25rem 0 0;
-}
+.header-icon { width: 56px; height: 56px; background: var(--accent-gradient); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; font-size: 1.8rem; }
+.header-text h1 { font-size: 1.75rem; font-weight: 800; background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin: 0; }
+.header-text p { color: var(--text-secondary); font-size: 0.9rem; margin: 0.25rem 0 0; }
 
-.section-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    padding: 1.75rem; margin-bottom: 1.5rem;
-    box-shadow: var(--shadow-md);
-}
-.section-title {
-    display: flex; align-items: center; gap: 0.75rem;
-    font-family: 'Inter', sans-serif;
-    font-size: 0.8rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1.5px;
-    color: var(--text-secondary);
-    margin-bottom: 1.25rem; padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--border-primary);
-}
-.step-number {
-    width: 28px; height: 28px;
-    background: var(--accent-gradient);
-    border-radius: 50%;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem; font-weight: 700; color: white;
-}
+.section-card { background: var(--bg-card); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); padding: 1.75rem; margin-bottom: 1.5rem; box-shadow: var(--shadow-md); }
+.section-title { display: flex; align-items: center; gap: 0.75rem; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-secondary); padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-primary); }
+.step-number { width: 28px; height: 28px; background: var(--accent-gradient); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 700; color: white; }
 
-.badge {
-    display: inline-flex; align-items: center;
-    padding: 0.2rem 0.5rem; border-radius: 20px;
-    font-size: 0.65rem; font-weight: 600;
-    font-family: 'JetBrains Mono', monospace;
-}
+.badge { display: inline-flex; align-items: center; padding: 0.2rem 0.5rem; border-radius: 20px; font-size: 0.65rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
 .badge-ok { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
 .badge-err { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
 .badge-warn { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
 
-.stat-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1.25rem; margin-bottom: 2rem;
-}
-.stat-box {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-md);
-    padding: 1.5rem 1.75rem;
-    position: relative; overflow: hidden;
-    transition: all 0.3s ease;
-}
-.stat-box:hover {
-    border-color: var(--border-secondary);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
-.stat-box::before {
-    content: ''; position: absolute;
-    top: 0; left: 0; width: 4px; height: 100%;
-}
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
+.stat-box { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 1.5rem 1.75rem; position: relative; overflow: hidden; }
+.stat-box::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; }
 .stat-box.blue::before { background: var(--accent-gradient); }
 .stat-box.green::before { background: var(--success); }
 .stat-box.orange::before { background: var(--warning); }
 .stat-box.red::before { background: var(--danger); }
 .stat-box.default::before { background: var(--text-muted); }
 .stat-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
-.stat-label {
-    font-size: 0.85rem; font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase; letter-spacing: 1.5px;
-    margin-bottom: 0.5rem;
-}
-.stat-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 2.5rem; font-weight: 700;
-    line-height: 1.1; color: var(--text-primary);
-}
+.stat-label { font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 0.5rem; }
+.stat-value { font-family: 'JetBrains Mono', monospace; font-size: 2.5rem; font-weight: 700; line-height: 1.1; color: var(--text-primary); }
 .stat-value.blue { color: var(--accent-primary); }
 .stat-value.green { color: var(--success); }
 .stat-value.orange { color: var(--warning); }
 .stat-value.red { color: var(--danger); }
 
-.stButton > button {
-    background: var(--accent-gradient) !important;
-    color: white !important; border: none !important;
-    font-weight: 600 !important;
-    font-family: 'Inter', sans-serif !important;
-    border-radius: var(--radius-sm) !important;
-    padding: 0.65rem 1.5rem !important;
-    font-size: 0.9rem !important;
-    transition: all 0.3s ease !important;
-    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3) !important;
-}
-.stButton > button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 6px 25px rgba(99, 102, 241, 0.4) !important;
-}
+.stButton > button { background: var(--accent-gradient) !important; color: white !important; border: none !important; font-weight: 600 !important; border-radius: var(--radius-sm) !important; padding: 0.65rem 1.5rem !important; font-size: 0.9rem !important; }
+.stDownloadButton > button { background: var(--bg-tertiary) !important; color: var(--text-primary) !important; border: 1px solid var(--border-secondary) !important; font-weight: 600 !important; border-radius: var(--radius-sm) !important; }
+.stTextArea textarea { background: var(--bg-secondary) !important; border: 1px solid var(--border-primary) !important; border-radius: var(--radius-md) !important; color: var(--text-primary) !important; font-family: 'JetBrains Mono', monospace !important; font-size: 0.85rem !important; padding: 1rem !important; }
 
-.stDownloadButton > button {
-    background: var(--bg-tertiary) !important;
-    color: var(--text-primary) !important;
-    border: 1px solid var(--border-secondary) !important;
-    font-weight: 600 !important;
-    border-radius: var(--radius-sm) !important;
-}
-.stDownloadButton > button:hover {
-    border-color: var(--accent-primary) !important;
-    background: rgba(99, 102, 241, 0.1) !important;
-}
-
-.stTextArea textarea {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-primary) !important;
-    border-radius: var(--radius-md) !important;
-    color: var(--text-primary) !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.85rem !important; padding: 1rem !important;
-}
-.stTextArea textarea:focus {
-    border-color: var(--accent-primary) !important;
-    box-shadow: 0 0 0 3px var(--accent-glow) !important;
-}
-
-.stToggle > label > div { background-color: var(--bg-tertiary) !important; }
-.stToggle > label > div[data-checked="true"] { background: var(--accent-gradient) !important; }
-.stCheckbox label { color: var(--text-secondary) !important; font-size: 0.85rem !important; }
-.stCheckbox label:hover { color: var(--text-primary) !important; }
-.stMultiSelect > div > div {
-    background: var(--bg-secondary) !important;
-    border-color: var(--border-primary) !important;
-}
-
-.stProgress > div > div {
-    background: var(--accent-gradient) !important;
-    border-radius: 10px !important;
-}
-.stProgress > div {
-    background: var(--bg-tertiary) !important;
-    border-radius: 10px !important;
-}
-
-.streamlit-expanderHeader {
-    background: var(--bg-secondary) !important;
-    border-radius: var(--radius-sm) !important;
-    color: var(--text-secondary) !important;
-}
-.streamlit-expanderContent {
-    background: var(--bg-tertiary) !important;
-    border: 1px solid var(--border-primary) !important;
-    border-top: none !important;
-}
-
-[data-testid="stMetricValue"] {
-    font-family: 'JetBrains Mono', monospace !important;
-    font-weight: 700 !important;
-    color: var(--accent-primary) !important;
-}
-[data-testid="stMetricLabel"] { color: var(--text-secondary) !important; }
-
-.product-card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-md);
-    overflow: hidden; transition: all 0.3s ease;
-    margin-bottom: 0.75rem;
-}
-.product-card:hover {
-    border-color: var(--border-secondary);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
+.product-card { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); overflow: hidden; margin-bottom: 0.75rem; }
 .product-card.status-ok { border-color: var(--success-border); }
 .product-card.status-warn { border-color: var(--warning-border); }
 .product-card.status-error { border-color: var(--danger-border); }
 .product-card.rejected { opacity: 0.4; filter: grayscale(0.5); }
-
-.card-image {
-    width: 100%; height: 600px;
-    object-fit: cover; display: block;
-    background: var(--bg-tertiary);
-}
-.card-placeholder {
-    width: 100%; height: 600px;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 0.75rem;
-    background: var(--bg-tertiary); color: var(--text-muted);
-}
+.card-image { width: 100%; height: 600px; object-fit: cover; display: block; background: var(--bg-tertiary); }
+.card-placeholder { width: 100%; height: 600px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; background: var(--bg-tertiary); color: var(--text-muted); }
 .card-placeholder.warn { background: var(--warning-bg); }
 .card-placeholder.error { background: var(--danger-bg); }
 .card-placeholder-icon { font-size: 2.5rem; }
 .card-placeholder-text { font-size: 0.8rem; font-weight: 500; }
-
 .card-body { padding: 1rem; }
-.card-header {
-    display: flex; justify-content: space-between;
-    align-items: center; margin-bottom: 0.6rem; gap: 0.5rem;
-}
-.card-ean {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem; font-weight: 700;
-    color: var(--text-primary);
-}
-.card-meta {
-    display: flex; flex-wrap: wrap;
-    gap: 0.6rem; margin-bottom: 0.6rem;
-}
-.card-meta-item {
-    font-size: 1rem; color: var(--text-muted);
-    font-family: 'JetBrains Mono', monospace;
-}
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; gap: 0.5rem; }
+.card-ean { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); }
+.card-name { font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-meta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.6rem; }
+.card-meta-item { font-size: 1rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+.card-link-button { color: var(--accent-primary) !important; text-decoration: none !important; display: block; width: 100%; padding: 0.5rem 0.75rem; background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: var(--radius-sm); font-size: 0.75rem; font-weight: 600; text-align: center; margin-bottom: 0.5rem; }
+.card-error { font-size: 0.7rem; color: var(--danger); background: var(--danger-bg); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; margin-bottom: 0.5rem; }
 
-.card-link-button {
-    color: white !important; text-decoration: none !important;
-    display: block; width: 100%;
-    padding: 0.5rem 0.75rem;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-sm);
-    color: var(--accent-primary);
-    font-size: 0.75rem; font-weight: 600;
-    text-align: center; transition: all 0.2s ease;
-    margin-bottom: 0.5rem;
-}
-.card-link-button:hover {
-    background: rgba(99, 102, 241, 0.1);
-    border-color: var(--accent-primary);
-}
+.demo-banner { background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: var(--radius-md); padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; }
+.demo-banner-text p { margin: 0; font-size: 0.85rem; color: var(--text-secondary); }
 
-.card-error {
-    font-size: 0.7rem; color: var(--danger);
-    background: var(--danger-bg);
-    border-radius: var(--radius-sm);
-    padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;
-}
+.missing-eans-box { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-md); padding: 1rem; margin-bottom: 1rem; }
+.missing-eans-header { display: flex; align-items: center; gap: 0.5rem; color: var(--warning); font-weight: 600; font-size: 0.9rem; }
+.missing-eans-count { background: var(--warning); color: var(--bg-primary); padding: 0.1rem 0.5rem; border-radius: 12px; font-size: 0.75rem; font-weight: 700; }
 
-.demo-banner {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%);
-    border: 1px solid rgba(139, 92, 246, 0.3);
-    border-radius: var(--radius-md);
-    padding: 1rem 1.25rem; margin-bottom: 1.5rem;
-    display: flex; align-items: center; gap: 0.75rem;
-}
-.demo-banner-icon { font-size: 1.5rem; }
-.demo-banner-text strong { color: var(--accent-secondary); }
-.demo-banner-text p {
-    margin: 0; font-size: 0.85rem;
-    color: var(--text-secondary);
-}
-
-.missing-eans-box {
-    background: var(--warning-bg);
-    border: 1px solid var(--warning-border);
-    border-radius: var(--radius-md);
-    padding: 1rem;
-    margin-bottom: 1rem;
-}
-.missing-eans-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--warning);
-    font-weight: 600;
-    font-size: 0.9rem;
-}
-.missing-eans-count {
-    background: var(--warning);
-    color: var(--bg-primary);
-    padding: 0.1rem 0.5rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    font-family: 'JetBrains Mono', monospace;
-}
-
-.app-footer {
-    margin-top: 3rem; padding: 1.5rem 0;
-    border-top: 1px solid var(--border-primary);
-    text-align: center;
-}
-.app-footer p {
-    color: var(--text-muted); font-size: 0.75rem;
-    font-family: 'JetBrains Mono', monospace; margin: 0;
-}
-
-@media (max-width: 1200px) {
-    .stat-row { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 768px) {
-    .stat-row { grid-template-columns: 1fr; }
-    .header-text h1 { font-size: 1.4rem; }
-    .stat-value { font-size: 2rem; }
-}
-
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: var(--bg-secondary); }
-::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 4px; }
+.app-footer { margin-top: 3rem; padding: 1.5rem 0; border-top: 1px solid var(--border-primary); text-align: center; }
+.app-footer p { color: var(--text-muted); font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; margin: 0; }
 """
+
+
+# ── Optimization config panel ─────────────────────────────────────────────
+
+def render_optimization_config_panel(state: AppState) -> OptimizationConfig:
+    """
+    Renders the optimization configuration panel at the top of the page.
+    Returns the current OptimizationConfig built from UI selections.
+    """
+    st.markdown(
+        '<div class="opt-config-panel">'
+        '<div class="opt-config-title">'
+        '⚡ Ustawienia optymalizacji '
+        '<span class="opt-inline-badge">W LOCIE</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    preset_col, status_col = st.columns([2, 3])
+
+    with preset_col:
+        preset_name = st.selectbox(
+            "Preset optymalizacji",
+            options=list(PRESETS.keys()),
+            index=list(PRESETS.keys()).index("E-commerce"),
+            key="opt_preset",
+            help="Wybierz gotowy zestaw ustawień lub dostosuj ręcznie poniżej.",
+        )
+        config = PRESETS[preset_name]
+
+    with status_col:
+        if config.enabled:
+            st.info(
+                f"📐 Max: **{config.max_width}×{config.max_height}** px · "
+                f"💾 Max: **{config.max_file_size_kb} KB** · "
+                f"🎨 JPEG: **{config.jpeg_quality}%** · "
+                f"WebP: **{config.webp_quality}%**"
+            )
+        else:
+            st.info("Optymalizacja wyłączona — grafiki zostaną pobrane bez zmian.")
+
+    if config.enabled:
+        with st.expander("⚙️ Ustawienia zaawansowane", expanded=False):
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.markdown("##### 📐 Rozdzielczość")
+                max_w = st.number_input(
+                    "Max szerokość (px)", min_value=200, max_value=10000,
+                    value=config.max_width, step=100, key="opt_max_w",
+                )
+                max_h = st.number_input(
+                    "Max wysokość (px)", min_value=200, max_value=10000,
+                    value=config.max_height, step=100, key="opt_max_h",
+                )
+
+            with col2:
+                st.markdown("##### 🎨 Jakość kompresji")
+                jpeg_q = st.slider(
+                    "JPEG quality", min_value=30, max_value=100,
+                    value=config.jpeg_quality, key="opt_jpeg_q",
+                )
+                webp_q = st.slider(
+                    "WebP quality", min_value=30, max_value=100,
+                    value=config.webp_quality, key="opt_webp_q",
+                )
+                max_size = st.number_input(
+                    "Max rozmiar pliku (KB)", min_value=100, max_value=20000,
+                    value=config.max_file_size_kb, step=100, key="opt_max_size",
+                )
+
+            with col3:
+                st.markdown("##### 🔧 Opcje")
+                convert_bmp = st.checkbox("BMP → JPEG", value=config.convert_bmp_to_jpeg, key="opt_bmp")
+                convert_tiff = st.checkbox("TIFF → JPEG", value=config.convert_tiff_to_jpeg, key="opt_tiff")
+                convert_webp = st.checkbox("WebP → PNG", value=config.convert_webp_to_png, key="opt_webp")
+                convert_png = st.checkbox("PNG → JPEG (bez alpha)", value=config.convert_png_to_jpeg_if_no_alpha, key="opt_png")
+                strip_meta = st.checkbox("Usuń metadane EXIF", value=config.strip_metadata, key="opt_strip")
+                sharpen = st.checkbox("Wyostrz po skalowaniu", value=config.sharpen_after_resize, key="opt_sharpen")
+                progressive = st.checkbox("Progresywny JPEG", value=config.progressive_jpeg, key="opt_progressive")
+
+            config = OptimizationConfig(
+                enabled=True,
+                max_width=max_w,
+                max_height=max_h,
+                max_file_size_kb=max_size,
+                jpeg_quality=jpeg_q,
+                webp_quality=webp_q,
+                convert_bmp_to_jpeg=convert_bmp,
+                convert_tiff_to_jpeg=convert_tiff,
+                convert_webp_to_png=convert_webp,
+                convert_png_to_jpeg_if_no_alpha=convert_png,
+                strip_metadata=strip_meta,
+                sharpen_after_resize=sharpen,
+                progressive_jpeg=progressive,
+            )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    return config
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -720,7 +743,6 @@ html, body, [class*="css"] {
 
 
 def main() -> None:
-    # ── Page config ────────────────────────────────────────────────────
     st.set_page_config(
         page_title=PAGE_TITLE,
         page_icon="🖼️",
@@ -771,6 +793,10 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
+    # ── OPTIMIZATION CONFIG PANEL (moved to top) ──────────────────────
+    opt_config = render_optimization_config_panel(state)
+    state.optimization_config = opt_config
+
     # ── Section 1: Input ──────────────────────────────────────────────
     st.markdown(
         '<div class="section-card">'
@@ -794,7 +820,6 @@ def main() -> None:
         value=default_text,
     )
 
-    # Strict validation toggle
     strict_col, _ = st.columns([3, 6])
     with strict_col:
         state.strict_ean = st.checkbox(
@@ -802,8 +827,7 @@ def main() -> None:
             value=state.strict_ean,
             help=(
                 "Wyłącz, jeśli używasz wewnętrznych kodów bez prawidłowej "
-                "cyfry kontrolnej. Domyślnie sprawdzany jest tylko format "
-                "(8, 13 lub 14 cyfr)."
+                "cyfry kontrolnej."
             ),
         )
 
@@ -821,6 +845,8 @@ def main() -> None:
             if invalid_preview:
                 parts.append(f"⚠️ {len(invalid_preview)} nieprawidłowych")
             parts.append(f"Batch size: {BATCH_SIZE}")
+            if opt_config.enabled:
+                parts.append(f"⚡ Optymalizacja aktywna")
             st.caption(" · ".join(parts))
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -854,16 +880,22 @@ def main() -> None:
             state.last_eans = ean_input
             state.rejected_eans = set()
             state.export_done = False
+            state.optimization_summary = None
+            state.optimized = False
 
             ean_url_map = _fetch_urls(valid_eans, state.demo_mode)
             if ean_url_map is None:
                 st.stop()
 
-            df = _analyze(valid_eans, ean_url_map)
+            # Analyze + optimize inline
+            df, summary = _analyze_and_optimize(valid_eans, ean_url_map, opt_config)
             if df is None:
                 st.stop()
 
             state.results_df = df
+            state.optimization_summary = summary
+            if summary is not None:
+                state.optimized = summary.optimized > 0
             st.rerun()
 
     elif submit and not ean_input.strip():
@@ -896,10 +928,7 @@ def _fetch_urls(
         ):
             simulate_webhook_delay()
             ean_url_map = get_demo_ean_url_map(eans)
-            logger.info(
-                "[DEMO] Wygenerowano mapowanie dla %d EAN-ów",
-                len(ean_url_map),
-            )
+            logger.info("[DEMO] Wygenerowano mapowanie dla %d EAN-ów", len(ean_url_map))
         total_urls = sum(len(v["urls"]) for v in ean_url_map.values())
         st.success(
             f"✅ [DEMO] Zasymulowano {total_urls} URL-i "
@@ -907,38 +936,42 @@ def _fetch_urls(
         )
         return ean_url_map
 
-    with st.spinner(
-        f"📡 Wysyłanie {len(eans)} EAN-ów do Power Automate..."
-    ):
+    with st.spinner(f"📡 Wysyłanie {len(eans)} EAN-ów do Power Automate..."):
         try:
-            ean_url_map = fetch_ean_urls_batch(
-                eans, WEBHOOK_URL_FETCH, BATCH_SIZE
-            )
-            logger.info(
-                "Otrzymano mapowanie dla %d EAN-ów", len(ean_url_map)
-            )
+            ean_url_map = fetch_ean_urls_batch(eans, WEBHOOK_URL_FETCH, BATCH_SIZE)
+            logger.info("Otrzymano mapowanie dla %d EAN-ów", len(ean_url_map))
         except Exception as exc:
             st.error(f"❌ {user_error_message(exc)}")
             logger.exception("Błąd fetch_ean_urls_batch")
             return None
 
     total_urls = sum(len(v["urls"]) for v in ean_url_map.values())
-    st.success(
-        f"✅ Odebrano {total_urls} URL-i dla {len(ean_url_map)} EAN-ów."
-    )
+    st.success(f"✅ Odebrano {total_urls} URL-i dla {len(ean_url_map)} EAN-ów.")
     return ean_url_map
 
 
-def _analyze(
+def _analyze_and_optimize(
     eans: list[str],
     ean_url_map: dict[str, dict],
-) -> Optional[pd.DataFrame]:
-    """Download and analyze images. Returns normalized DataFrame or None."""
-    with st.spinner("🔍 Pobieranie i analiza grafik..."):
+    opt_config: OptimizationConfig,
+) -> tuple[Optional[pd.DataFrame], Optional[OptimizationSummary]]:
+    """
+    Download, analyze, and immediately optimize images inline.
+    Returns (normalized DataFrame, OptimizationSummary) or (None, None) on error.
+    """
+    from image_optimizer import optimize_dataframe
+
+    # Step 1: Download & analyze
+    spinner_msg = "🔍 Pobieranie i analiza grafik..."
+    if opt_config.enabled:
+        spinner_msg = "🔍 Pobieranie, analiza i optymalizacja grafik w locie..."
+
+    with st.spinner(spinner_msg):
         progress_bar = st.progress(0)
 
         def on_progress(done: int, total: int) -> None:
-            progress_bar.progress(done / max(total, 1))
+            # Allocate 70% for download, 30% for optimization
+            progress_bar.progress(int((done / max(total, 1)) * 0.7))
 
         try:
             records = analyze_images_parallel(
@@ -949,17 +982,51 @@ def _analyze(
         except Exception as exc:
             st.error(f"❌ {user_error_message(exc)}")
             logger.exception("Błąd analyze_images_parallel")
-            return None
+            return None, None
+
+        df = pd.DataFrame(records)
+        df = normalize_columns(df)
+
+        summary: Optional[OptimizationSummary] = None
+
+        if opt_config.enabled and not df.empty:
+            # Save original metadata BEFORE optimization
+            df[COL_RESOLUTION_BEFORE] = df[COL_RESOLUTION].copy()
+            df[COL_FILE_SIZE_BEFORE] = df[COL_FILE_SIZE].copy()
+            df[COL_EXTENSION_BEFORE] = df[COL_EXTENSION].copy()
+
+            def on_opt_progress(done: int, total: int) -> None:
+                base = 0.7
+                progress_bar.progress(base + int((done / max(total, 1)) * 0.3))
+
+            df, summary = optimize_dataframe(
+                df, config=opt_config, progress_callback=on_opt_progress,
+            )
+        else:
+            # No optimization — still add before columns as empty
+            df[COL_RESOLUTION_BEFORE] = ""
+            df[COL_FILE_SIZE_BEFORE] = ""
+            df[COL_EXTENSION_BEFORE] = ""
 
         progress_bar.progress(1.0)
 
-    df = pd.DataFrame(records)
-    df = normalize_columns(df)
-    return df
+    # Success message
+    ok_count = int((df[COL_STATUS] == "OK").sum()) if COL_STATUS in df.columns else 0
+    if opt_config.enabled and summary and summary.optimized > 0:
+        st.success(
+            f"✅ Pobrano **{ok_count}** grafik · "
+            f"Zoptymalizowano **{summary.optimized}** · "
+            f"Oszczędność: **{summary.total_saved_kb:.0f} KB** "
+            f"(**{summary.total_saved_pct:.1f}%**)"
+        )
+    else:
+        st.success(f"✅ Pobrano i przeanalizowano **{ok_count}** grafik.")
+
+    return df, summary
 
 
 def _render_results(state: AppState) -> None:
-    """Render results and export sections."""
+    """Render results, optimization summary, and export sections."""
     df = state.results_df
 
     if df is None:
@@ -980,6 +1047,10 @@ def _render_results(state: AppState) -> None:
 
     stats = compute_stats(df, state.rejected_eans)
     st.markdown(render_stats_html(stats), unsafe_allow_html=True)
+
+    # Show optimization summary if we have one
+    if state.optimization_summary and state.optimized:
+        _render_optimization_summary(state.optimization_summary)
 
     # Filters
     with st.expander("🔧 Filtry", expanded=False):
@@ -1008,7 +1079,7 @@ def _render_results(state: AppState) -> None:
             df[COL_EXTENSION].isna() & include_na
         )
     else:
-        mask &= False  # nothing selected → show nothing
+        mask &= False
 
     filtered_df = df[mask].copy()
 
@@ -1044,12 +1115,9 @@ def _render_results(state: AppState) -> None:
     start_idx = (page - 1) * ITEMS_PER_PAGE
     page_df = filtered_df.iloc[start_idx : start_idx + ITEMS_PER_PAGE]
 
-    # ── Render cards with proper rejection handling ───────────────────
     rows_list = list(page_df.iterrows())
 
-    # Funkcja callback do aktualizacji rejected_eans
     def make_toggle_callback(ean: str):
-        """Tworzy callback dla konkretnego EAN-u."""
         def callback():
             if ean in state.rejected_eans:
                 state.rejected_eans.discard(ean)
@@ -1066,13 +1134,10 @@ def _render_results(state: AppState) -> None:
                 is_rejected = ean_value in state.rejected_eans
 
                 with cols[j]:
-                    # Renderuj kartę z aktualnym stanem odrzucenia
                     st.markdown(
                         render_product_card_html(row, is_rejected),
                         unsafe_allow_html=True,
                     )
-
-                    # Checkbox z on_change callback
                     st.checkbox(
                         "🗑 Odrzuć",
                         key=f"rej_{ean_value}",
@@ -1085,322 +1150,74 @@ def _render_results(state: AppState) -> None:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    _render_optimization_panel(state)
-
     # ── Export card ───────────────────────────────────────────────────
     _render_export(df, state)
 
-def _render_optimization_panel(state: AppState) -> None:
-    """Panel konfiguracji i uruchamiania optymalizacji."""
-    df = state.results_df
-    if df is None or df.empty:
-        return
 
-    ok_count = int((df["status"] == "OK").sum())
-    if ok_count == 0:
-        return
-
-    st.markdown(
-        '<div class="section-card">'
-        '<div class="section-title">'
-        '<span class="step-number">⚡</span> Optymalizacja grafik'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Preset selector ──
-    preset_col, info_col = st.columns([2, 3])
-
-    with preset_col:
-        preset_name = st.selectbox(
-            "Preset optymalizacji",
-            options=list(PRESETS.keys()),
-            index=4,  # "Ecommerce"
-            help="Wybierz gotowy zestaw ustawień lub dostosuj ręcznie.",
-        )
-        config = PRESETS[preset_name]
-
-    with info_col:
-        if config.enabled:
-            st.info(
-                f"📐 Max: **{config.max_width}×{config.max_height}** px · "
-                f"💾 Max: **{config.max_file_size_kb} KB** · "
-                f"🎨 JPEG: **{config.jpeg_quality}%** · "
-                f"WebP: **{config.webp_quality}%**"
-            )
-        else:
-            st.info("Optymalizacja wyłączona — obrazy zostaną wysłane bez zmian.")
-
-    # ── Zaawansowane ustawienia ──
-    if config.enabled:
-        with st.expander("⚙️ Ustawienia zaawansowane", expanded=False):
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.markdown("##### 📐 Rozdzielczość")
-                max_w = st.number_input(
-                    "Max szerokość (px)",
-                    min_value=200, max_value=10000,
-                    value=config.max_width, step=100,
-                )
-                max_h = st.number_input(
-                    "Max wysokość (px)",
-                    min_value=200, max_value=10000,
-                    value=config.max_height, step=100,
-                )
-
-            with col2:
-                st.markdown("##### 🎨 Jakość kompresji")
-                jpeg_q = st.slider(
-                    "JPEG quality",
-                    min_value=30, max_value=100,
-                    value=config.jpeg_quality,
-                    help="85 = dobry balans jakości i rozmiaru",
-                )
-                webp_q = st.slider(
-                    "WebP quality",
-                    min_value=30, max_value=100,
-                    value=config.webp_quality,
-                )
-                max_size = st.number_input(
-                    "Max rozmiar pliku (KB)",
-                    min_value=100, max_value=20000,
-                    value=config.max_file_size_kb, step=100,
-                )
-
-            with col3:
-                st.markdown("##### 🔧 Opcje")
-                convert_bmp = st.checkbox(
-                    "BMP → JPEG", value=config.convert_bmp_to_jpeg,
-                )
-                convert_tiff = st.checkbox(
-                    "TIFF → JPEG", value=config.convert_tiff_to_jpeg,
-                )
-                convert_webp = st.checkbox(
-                    "WebP → PNG",
-                    value=config.convert_webp_to_png,
-                    help="Konwertuj WebP na PNG (lepsza kompatybilność)",
-                )
-                convert_png = st.checkbox(
-                    "PNG → JPEG (bez alpha)",
-                    value=config.convert_png_to_jpeg_if_no_alpha,
-                    help="Tylko PNG bez przezroczystości",
-                )
-                strip_meta = st.checkbox(
-                    "Usuń metadane EXIF",
-                    value=config.strip_metadata,
-                )
-                sharpen = st.checkbox(
-                    "Wyostrz po skalowaniu",
-                    value=config.sharpen_after_resize,
-                )
-                progressive = st.checkbox(
-                    "Progresywny JPEG",
-                    value=config.progressive_jpeg,
-                )
-
-            # Nadpisz config wartościami z UI
-            config = OptimizationConfig(
-                enabled=True,
-                max_width=max_w,
-                max_height=max_h,
-                max_file_size_kb=max_size,
-                jpeg_quality=jpeg_q,
-                webp_quality=webp_q,
-                convert_bmp_to_jpeg=convert_bmp,
-                convert_tiff_to_jpeg=convert_tiff,
-                convert_webp_to_png=convert_webp,       # ← NOWE
-                convert_png_to_jpeg_if_no_alpha=convert_png,
-                strip_metadata=strip_meta,
-                sharpen_after_resize=sharpen,
-                progressive_jpeg=progressive,
-            )
-
-    state.optimization_config = config
-
-    # ── Podgląd co wymaga optymalizacji ──
-    if config.enabled and "_image_bytes" in df.columns:
-        _render_optimization_preview(df, config)
-
-    # ── Przycisk optymalizacji ──
-    btn_col, status_col = st.columns([1, 3])
-
-    with btn_col:
-        optimize_btn = st.button(
-            "⚡ Optymalizuj grafiki",
-            use_container_width=True,
-            disabled=not config.enabled,
-        )
-
-    if optimize_btn and config.enabled:
-        with st.spinner("⚡ Optymalizacja grafik..."):
-            progress = st.progress(0)
-
-            def on_progress(done: int, total: int):
-                progress.progress(done / max(total, 1))
-
-            optimized_df, summary = optimize_dataframe(
-                df, config=config, progress_callback=on_progress,
-            )
-            progress.progress(1.0)
-
-        state.results_df = optimized_df
-        state.optimization_summary = summary
-        state.optimized = True
-
-        with status_col:
-            if summary.optimized > 0:
-                st.success(
-                    f"✅ Zoptymalizowano **{summary.optimized}** grafik · "
-                    f"Oszczędność: **{summary.total_saved_kb:.0f} KB** "
-                    f"(**{summary.total_saved_pct:.1f}%**)"
-                )
-            else:
-                st.info("Żadna grafika nie wymagała optymalizacji.")
-
-    # ── Wyświetl podsumowanie ──
-    if state.optimization_summary and state.optimized:
-        _render_optimization_summary(state.optimization_summary)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _render_optimization_preview(
-    df: pd.DataFrame, config: OptimizationConfig
-) -> None:
-    """Podgląd: ile grafik wymaga optymalizacji."""
-    ok_df = df[df["status"] == "OK"].copy()
-
-    needs_resize = 0
-    needs_compress = 0
-    needs_convert = 0
-    total_size_kb = 0
-
-    for _, row in ok_df.iterrows():
-        raw = row.get("_image_bytes")
-        if not isinstance(raw, bytes):
-            continue
-
-        size_kb = len(raw) / 1024
-        total_size_kb += size_kb
-
-        # Sprawdź rozdzielczość
-        res = str(row.get("rozdzielczość", ""))
-        if "×" in res:
-            try:
-                w, h = res.split("×")
-                if int(w) > config.max_width or int(h) > config.max_height:
-                    needs_resize += 1
-            except (ValueError, TypeError):
-                pass
-
-        # Sprawdź rozmiar
-        if size_kb > config.max_file_size_kb:
-            needs_compress += 1
-
-        # Sprawdź format
-        ext = str(row.get("rozszerzenie", "")).upper()
-        if ext in ("BMP",) and config.convert_bmp_to_jpeg:
-            needs_convert += 1
-        elif ext in ("TIFF",) and config.convert_tiff_to_jpeg:
-            needs_convert += 1
-        elif ext in ("WEBP",) and config.convert_webp_to_png:
-            needs_convert += 1
-
-    if needs_resize or needs_compress or needs_convert:
+def _render_optimization_summary(summary: OptimizationSummary) -> None:
+    """Displays a compact optimization summary inline in results."""
+    with st.expander(
+        f"⚡ Podsumowanie optymalizacji — zaoszczędzono **{summary.total_saved_kb:.0f} KB** "
+        f"({summary.total_saved_pct:.1f}%)",
+        expanded=False,
+    ):
         st.markdown(
             f"""
-            <div style="
-                background: rgba(245, 158, 11, 0.1);
-                border: 1px solid rgba(245, 158, 11, 0.3);
-                border-radius: 8px;
-                padding: 1rem;
-                margin: 0.75rem 0;
-            ">
-                <strong style="color: #f59e0b;">⚠️ Wykryto grafiki do optymalizacji:</strong>
-                <ul style="margin: 0.5rem 0 0; padding-left: 1.5rem; color: var(--text-secondary);">
-                    {"<li>📐 <strong>" + str(needs_resize) + "</strong> z rozdzielczością > " + str(config.max_width) + "×" + str(config.max_height) + "</li>" if needs_resize else ""}
-                    {"<li>💾 <strong>" + str(needs_compress) + "</strong> z rozmiarem > " + str(config.max_file_size_kb) + " KB</li>" if needs_compress else ""}
-                    {"<li>🔄 <strong>" + str(needs_convert) + "</strong> do konwersji formatu</li>" if needs_convert else ""}
-                    <li>📦 Łączny rozmiar: <strong>{total_size_kb:.0f} KB</strong></li>
-                </ul>
+            <div class="stat-row" style="margin-bottom:1rem">
+                <div class="stat-box green">
+                    <div class="stat-icon">⚡</div>
+                    <div class="stat-label">Zoptymalizowane</div>
+                    <div class="stat-value green">{summary.optimized}</div>
+                </div>
+                <div class="stat-box blue">
+                    <div class="stat-icon">📐</div>
+                    <div class="stat-label">Przeskalowane</div>
+                    <div class="stat-value blue">{summary.resized_count}</div>
+                </div>
+                <div class="stat-box orange">
+                    <div class="stat-icon">🗜️</div>
+                    <div class="stat-label">Skompresowane</div>
+                    <div class="stat-value orange">{summary.compressed_count}</div>
+                </div>
+                <div class="stat-box default">
+                    <div class="stat-icon">🔄</div>
+                    <div class="stat-label">Skonwertowane</div>
+                    <div class="stat-value">{summary.converted_count}</div>
+                </div>
+                <div class="stat-box green">
+                    <div class="stat-icon">💾</div>
+                    <div class="stat-label">Oszczędność</div>
+                    <div class="stat-value green">{summary.total_saved_kb:.0f} KB</div>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-    else:
-        st.markdown(
-            '<p style="color: var(--success); font-size: 0.85rem;">'
-            "✅ Wszystkie grafiki mieszczą się w limitach.</p>",
-            unsafe_allow_html=True,
-        )
 
+        if summary.results:
+            details = []
+            for r in summary.results:
+                if r.skipped and not r.error:
+                    continue
+                info = []
+                if r.was_resized:
+                    info.append(f"📐 {r.original_width}×{r.original_height}→{r.optimized_width}×{r.optimized_height}")
+                if r.was_compressed:
+                    info.append(f"🗜️ -{r.size_reduction_pct:.0f}%")
+                if r.was_converted:
+                    info.append(f"🔄 {r.original_format}→{r.optimized_format}")
+                if r.error:
+                    info.append(f"❌ {r.error}")
+                if info:
+                    details.append({
+                        "EAN": r.ean,
+                        "Przed": f"{r.original_size_bytes / 1024:.1f} KB",
+                        "Po": f"{r.optimized_size_bytes / 1024:.1f} KB",
+                        "Oszczędność": f"{r.size_saved_kb:.1f} KB",
+                        "Zmiany": " · ".join(info),
+                    })
 
-def _render_optimization_summary(summary: OptimizationSummary) -> None:
-    """Wyświetla podsumowanie optymalizacji."""
-    st.markdown(
-        f"""
-        <div class="stat-row">
-            <div class="stat-box green">
-                <div class="stat-icon">⚡</div>
-                <div class="stat-label">Zoptymalizowane</div>
-                <div class="stat-value green">{summary.optimized}</div>
-            </div>
-            <div class="stat-box blue">
-                <div class="stat-icon">📐</div>
-                <div class="stat-label">Przeskalowane</div>
-                <div class="stat-value blue">{summary.resized_count}</div>
-            </div>
-            <div class="stat-box orange">
-                <div class="stat-icon">🗜️</div>
-                <div class="stat-label">Skompresowane</div>
-                <div class="stat-value orange">{summary.compressed_count}</div>
-            </div>
-            <div class="stat-box default">
-                <div class="stat-icon">🔄</div>
-                <div class="stat-label">Skonwertowane</div>
-                <div class="stat-value">{summary.converted_count}</div>
-            </div>
-            <div class="stat-box green">
-                <div class="stat-icon">💾</div>
-                <div class="stat-label">Oszczędność</div>
-                <div class="stat-value green">{summary.total_saved_kb:.0f} KB</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Tabela szczegółów
-    if summary.results:
-        details = []
-        for r in summary.results:
-            if r.skipped and not r.error:
-                continue
-            info = []
-            if r.was_resized:
-                info.append(f"📐 {r.original_width}×{r.original_height}→{r.optimized_width}×{r.optimized_height}")
-            if r.was_compressed:
-                info.append(f"🗜️ -{r.size_reduction_pct:.0f}%")
-            if r.was_converted:
-                info.append(f"🔄 {r.original_format}→{r.optimized_format}")
-            if r.error:
-                info.append(f"❌ {r.error}")
-
-            if info:
-                details.append({
-                    "EAN": r.ean,
-                    "Przed": f"{r.original_size_bytes / 1024:.1f} KB",
-                    "Po": f"{r.optimized_size_bytes / 1024:.1f} KB",
-                    "Oszczędność": f"{r.size_saved_kb:.1f} KB",
-                    "Zmiany": " · ".join(info),
-                })
-
-        if details:
-            with st.expander(
-                f"📋 Szczegóły optymalizacji ({len(details)} zmian)",
-                expanded=False,
-            ):
+            if details:
                 st.dataframe(
                     pd.DataFrame(details),
                     use_container_width=True,
@@ -1413,7 +1230,6 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
     accepted_df = df[~df[COL_EAN].isin(state.rejected_eans)]
     accepted_ok = accepted_df[accepted_df[COL_STATUS] == "OK"]
 
-    # EAN-y bez grafiki (status "brak obrazu") + ręcznie odrzucone
     missing_eans_df = df[df[COL_STATUS] == "brak obrazu"]
     missing_auto = missing_eans_df[COL_EAN].tolist()
     missing_rejected = [e for e in state.rejected_eans if e not in set(missing_auto)]
@@ -1427,12 +1243,10 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Dwie kolumny: eksport i brakujące EAN-y ───────────────────────
     export_col, missing_col = st.columns(2, gap="large")
 
     with export_col:
         st.markdown("#### ☁️ Eksport zaakceptowanych grafik")
-
         st.metric("Zaakceptowane grafiki (OK)", len(accepted_ok))
 
         if state.export_done:
@@ -1440,19 +1254,14 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
 
         if not accepted_ok.empty:
             export_label = (
-                "🧪 Symuluj wysyłkę"
-                if state.demo_mode
-                else "☁️ Wyślij do OneDrive"
+                "🧪 Symuluj wysyłkę" if state.demo_mode else "☁️ Wyślij do OneDrive"
             )
             if st.button(export_label, use_container_width=True):
                 if state.demo_mode:
                     with st.spinner("🧪 [DEMO] Symulowanie eksportu..."):
                         simulate_webhook_delay()
                         state.export_done = True
-                    st.success(
-                        f"✅ [DEMO] Zasymulowano wysłanie "
-                        f"{len(accepted_ok)} grafik."
-                    )
+                    st.success(f"✅ [DEMO] Zasymulowano wysłanie {len(accepted_ok)} grafik.")
                 else:
                     with st.spinner("📤 Eksportowanie do OneDrive..."):
                         try:
@@ -1472,7 +1281,6 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
         else:
             st.info("Brak zaakceptowanych grafik z statusem OK do eksportu.")
 
-        # CSV download
         st.markdown("---")
         export_df = df.rename(columns=DISPLAY_LABELS)
         st.download_button(
@@ -1511,10 +1319,8 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
                 unsafe_allow_html=True,
             )
 
-            # Użyj st.code z wbudowanym przyciskiem kopiowania
             st.code(missing_eans_text, language=None)
 
-            # Przycisk pobierania TXT
             st.download_button(
                 "⬇️ Pobierz listę jako TXT",
                 data=missing_eans_text.encode("utf-8"),
@@ -1523,7 +1329,6 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
                 use_container_width=True,
             )
 
-            # Dodatkowa informacja
             st.caption(
                 "💡 Kliknij ikonę 📋 w prawym górnym rogu pola powyżej, "
                 "aby skopiować listę do schowka."
@@ -1532,12 +1337,8 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
             st.success("🎉 Wszystkie EAN-y mają przypisane grafiki!")
             st.markdown(
                 """
-                <div style="
-                    text-align: center;
-                    padding: 2rem;
-                    color: var(--text-muted);
-                ">
-                    <div style="font-size: 3rem; margin-bottom: 0.5rem;">✨</div>
+                <div style="text-align:center;padding:2rem;color:var(--text-muted)">
+                    <div style="font-size:3rem;margin-bottom:0.5rem">✨</div>
                     <p>Nie znaleziono żadnych EAN-ów bez grafiki.</p>
                 </div>
                 """,
