@@ -4,6 +4,7 @@ Pobiera grafiki na podstawie EAN-ów przez Power Automate webhook,
 analizuje je i eksportuje do OneDrive.
 """
 
+import io
 import re
 import logging
 from dataclasses import dataclass, field
@@ -1234,11 +1235,13 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
 
         st.markdown("---")
         export_df = df.rename(columns=DISPLAY_LABELS)
+        excel_buf = io.BytesIO()
+        export_df.to_excel(excel_buf, index=False, engine="openpyxl")
         st.download_button(
-            "⬇️ Pobierz CSV z wynikami",
-            data=export_df.to_csv(index=False).encode("utf-8"),
-            file_name="ean_images_report.csv",
-            mime="text/csv",
+            "⬇️ Pobierz Excel z wynikami",
+            data=excel_buf.getvalue(),
+            file_name="ean_images_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
@@ -1272,18 +1275,35 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
 
             st.code(missing_eans_text, language=None)
 
-            st.download_button(
-                "⬇️ Pobierz listę jako TXT",
-                data=missing_eans_text.encode("utf-8"),
-                file_name="brakujace_eany.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
-
-            st.caption(
-                "💡 Kliknij ikonę 📋 w prawym górnym rogu pola powyżej, "
-                "aby skopiować listę do schowka."
-            )
+            btn1, btn2, btn3 = st.columns(3)
+            with btn1:
+                st.button(
+                    "📋 Skopiuj EAN-y",
+                    key="copy_missing_eans",
+                    use_container_width=True,
+                    on_click=None,
+                    help="Użyj ikony 📋 w prawym górnym rogu pola powyżej",
+                )
+            with btn2:
+                st.download_button(
+                    "⬇️ Pobierz jako TXT",
+                    data=missing_eans_text.encode("utf-8"),
+                    file_name="brakujace_eany.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                )
+            with btn3:
+                missing_excel_buf = io.BytesIO()
+                pd.DataFrame({COL_EAN: missing_eans_list}).rename(
+                    columns=DISPLAY_LABELS
+                ).to_excel(missing_excel_buf, index=False, engine="openpyxl")
+                st.download_button(
+                    "⬇️ Pobierz jako Excel",
+                    data=missing_excel_buf.getvalue(),
+                    file_name="brakujace_eany.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
         else:
             st.success("🎉 Wszystkie EAN-y mają przypisane grafiki!")
             st.markdown(
