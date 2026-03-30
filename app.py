@@ -274,8 +274,10 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
     # Image area
     if status == "OK" and url:
         image_html = (
+            f"<a href='{url}' target='_blank' rel='noopener noreferrer' style='display:block;cursor:zoom-in;'>"
             f"<img src='{url}' class='card-image' alt='EAN {ean}' "
-            f"loading='lazy' onerror=\"this.style.display='none'\">"
+            f"loading='lazy' onerror=\"this.parentElement.style.display='none'\">"
+            f"</a>"
         )
     elif status == "brak obrazu":
         image_html = (
@@ -310,13 +312,7 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
             f"<div class='card-meta'>{''.join(meta_parts)}</div>" if meta_parts else ""
         )
 
-    # Link button
-    link_html = (
-        f"<a href='{url}' target='_blank' rel='noopener noreferrer' "
-        f"class='card-link-button'>🔗 LINK DO GRAFIKI</a>"
-        if url
-        else ""
-    )
+    link_html = ""
 
     # Error line
     error_html = ""
@@ -417,7 +413,6 @@ def _render_before_after_meta(
 def load_css() -> None:
     if CSS_FILE.is_file():
         css_text = CSS_FILE.read_text(encoding="utf-8")
-        # Inject additional CSS for before/after meta
         css_text += _EXTRA_CSS
     else:
         logger.warning(
@@ -425,6 +420,7 @@ def load_css() -> None:
         )
         css_text = _FALLBACK_CSS + _EXTRA_CSS
     st.markdown(f"<style>{css_text}</style>", unsafe_allow_html=True)
+    st.markdown(_LIGHTBOX_JS, unsafe_allow_html=True)
 
 
 # Additional CSS for new elements (appended to existing CSS)
@@ -529,6 +525,8 @@ _EXTRA_CSS = """
 }
 """
 
+_LIGHTBOX_JS = ""
+
 _FALLBACK_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
@@ -616,12 +614,17 @@ html, body, [class*="css"] {
 .product-card.status-warn { border-color: var(--warning-border); }
 .product-card.status-error { border-color: var(--danger-border); }
 .product-card.rejected { opacity: 0.4; filter: grayscale(0.5); }
-.card-image { width: 100%; height: 600px; object-fit: cover; display: block; background: var(--bg-tertiary); }
+.card-image { width: 100%; height: 600px; object-fit: cover; display: block; background: var(--bg-tertiary); cursor: zoom-in; }
 .card-placeholder { width: 100%; height: 600px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; background: var(--bg-tertiary); color: var(--text-muted); }
 .card-placeholder.warn { background: var(--warning-bg); }
 .card-placeholder.error { background: var(--danger-bg); }
 .card-placeholder-icon { font-size: 2.5rem; }
 .card-placeholder-text { font-size: 0.8rem; font-weight: 500; }
+#eim-lightbox { display:none; position:fixed; inset:0; z-index:999999; background:rgba(0,0,0,0.92); align-items:center; justify-content:center; cursor:zoom-out; }
+#eim-lightbox.open { display:flex; }
+#eim-lightbox img { max-width:92vw; max-height:92vh; object-fit:contain; border-radius:6px; box-shadow:0 8px 48px rgba(0,0,0,0.8); pointer-events:none; }
+#eim-lightbox-close { position:fixed; top:1.25rem; right:1.5rem; font-size:2rem; color:#fff; cursor:pointer; line-height:1; opacity:0.8; }
+#eim-lightbox-close:hover { opacity:1; }
 .card-body { padding: 1rem; }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; gap: 0.5rem; }
 .card-ean { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 700; color: var(--text-primary); }
