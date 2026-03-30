@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 # ── Konfiguracja optymalizacji ─────────────────────────────────────────────
 
+# Minimalny próg oszczędności — poniżej tej wartości zachowujemy oryginał
+MIN_SAVING_PCT = 15.0
+
 @dataclass
 class OptimizationConfig:
     """Parametry kompresji — wszystko konfigurowalne z UI."""
@@ -472,15 +475,21 @@ def optimize_single_image(
         result.optimized_size_bytes = len(optimized_bytes)
         result.was_compressed = len(optimized_bytes) < len(raw_bytes)
 
-        if len(optimized_bytes) >= len(raw_bytes) and not result.was_converted:
+        saving_pct = (1 - len(optimized_bytes) / len(raw_bytes)) * 100
+        if (len(optimized_bytes) >= len(raw_bytes) or saving_pct < MIN_SAVING_PCT) and not result.was_converted:
             logger.debug(
-                "EAN %s: optymalizacja powiększyła plik — zachowuję oryginał", ean
+                "EAN %s: oszczędność %.1f%% poniżej progu %.0f%% — zachowuję oryginał",
+                ean, saving_pct, MIN_SAVING_PCT,
             )
             result.optimized_size_bytes = len(raw_bytes)
             result.was_compressed = False
             result.was_resized = False
             result.skipped = True
-            result.skip_reason = "Optymalizacja powiększyłaby plik"
+            result.skip_reason = (
+                f"Oszczędność {saving_pct:.1f}% < próg {MIN_SAVING_PCT:.0f}%"
+                if saving_pct < MIN_SAVING_PCT
+                else "Optymalizacja powiększyłaby plik"
+            )
             return raw_bytes, "", result
 
         new_ext = _FORMAT_TO_EXT.get(output_format, ".jpg")

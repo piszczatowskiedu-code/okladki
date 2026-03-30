@@ -33,17 +33,16 @@ from image_optimizer import (
     PRESETS,
 )
 
-from demo_data import get_demo_ean_url_map, get_demo_eans_text, simulate_webhook_delay
 
 # ── Constants ──────────────────────────────────────────────────────────────
 MAX_EANS = 500
 CARDS_PER_ROW = 4
-ITEMS_PER_PAGE = 20
+ITEMS_PER_PAGE = 50
 TEXTAREA_HEIGHT = 180
 
 # Auto-reject thresholds
 AUTO_REJECT_MIN_WIDTH = 300
-AUTO_REJECT_MIN_HEIGHT = 400
+AUTO_REJECT_MIN_HEIGHT = 300
 CSS_FILE = Path(__file__).parent / "styles" / "main.css"
 
 # Column name mapping (internal english ↔ display polish)
@@ -105,7 +104,7 @@ class AppState:
     rejected_eans: set[str] = field(default_factory=set)
     export_done: bool = False
     last_eans: str = ""
-    demo_mode: bool = False
+    last_valid_eans: set[str] = field(default_factory=set)
     strict_ean: bool = False
     # ── Optymalizacja grafik ──
     optimization_config: OptimizationConfig = field(
@@ -632,8 +631,6 @@ html, body, [class*="css"] {
 .card-link-button { color: var(--accent-primary) !important; text-decoration: none !important; display: block; width: 100%; padding: 0.5rem 0.75rem; background: var(--bg-tertiary); border: 1px solid var(--border-primary); border-radius: var(--radius-sm); font-size: 0.75rem; font-weight: 600; text-align: center; margin-bottom: 0.5rem; }
 .card-error { font-size: 0.7rem; color: var(--danger); background: var(--danger-bg); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; margin-bottom: 0.5rem; }
 
-.demo-banner { background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: var(--radius-md); padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; }
-.demo-banner-text p { margin: 0; font-size: 0.85rem; color: var(--text-secondary); }
 
 .missing-eans-box { background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-md); padding: 1rem; margin-bottom: 1rem; }
 .missing-eans-header { display: flex; align-items: center; gap: 0.5rem; color: var(--warning); font-weight: 600; font-size: 0.9rem; }
@@ -651,15 +648,6 @@ def render_optimization_config_panel(state: AppState) -> OptimizationConfig:
     Renders the optimization configuration panel at the top of the page.
     Returns the current OptimizationConfig built from UI selections.
     """
-    st.markdown(
-        '<div class="opt-config-panel">'
-        '<div class="opt-config-title">'
-        '⚡ Ustawienia optymalizacji '
-        '<span class="opt-inline-badge">W LOCIE</span>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
     config = PRESETS["E-commerce"]
 
     if config.enabled:
@@ -761,30 +749,6 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Demo mode toggle ──────────────────────────────────────────────
-    demo_col, _ = st.columns([3, 6])
-    with demo_col:
-        state.demo_mode = st.toggle(
-            "🧪 Tryb Demo",
-            value=state.demo_mode,
-            help="Testuj aplikację bez podłączania do Power Automate.",
-        )
-
-    if state.demo_mode:
-        st.markdown(
-            """
-            <div class="demo-banner">
-                <div class="demo-banner-icon">🧪</div>
-                <div class="demo-banner-text">
-                    <p><strong>Tryb Demo aktywny</strong> — aplikacja symuluje odpowiedź
-                    webhooka i pobiera publiczne obrazy z picsum.photos.
-                    Eksport do OneDrive jest symulowany.</p>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     # ── OPTIMIZATION CONFIG PANEL (moved to top) ──────────────────────
     opt_config = render_optimization_config_panel(state)
     state.optimization_config = opt_config
@@ -798,11 +762,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    default_text = (
-        get_demo_eans_text()
-        if state.demo_mode and not state.last_eans
-        else state.last_eans
-    )
+    default_text = state.last_eans
 
     ean_input = st.text_area(
         label="Kody EAN (jeden na linię)",
@@ -869,27 +829,38 @@ def main() -> None:
                 f"Podano: {len(valid_eans)}."
             )
         else:
-            state.last_eans = ean_input
-            state.rejected_eans = set()
-            state.export_done = False
-            state.optimization_summary = None
-            state.optimized = False
+            # Sprawdź czy to te same EAN-y co ostatnie zapytanie
+            if (
+                state.results_df is not None
+                and set(valid_eans) == state.last_valid_eans
+            ):
+                st.info(
+                    "ℹ️ Już pobrano wyniki dla tych EAN-ów. "
+                    "Zmień listę, aby pobrać ponownie."
+                )
+            else:
+                state.last_eans = ean_input
+                state.rejected_eans = set()
+                state.export_done = False
+                state.optimization_summary = None
+                state.optimized = False
 
-            ean_url_map = _fetch_urls(valid_eans, state.demo_mode)
-            if ean_url_map is None:
-                st.stop()
+                ean_url_map = _fetch_urls(valid_eans)
+                if ean_url_map is None:
+                    st.stop()
 
-            # Analyze + optimize inline
-            df, summary = _analyze_and_optimize(valid_eans, ean_url_map, opt_config)
-            if df is None:
-                st.stop()
+                # Analyze + optimize inline
+                df, summary = _analyze_and_optimize(valid_eans, ean_url_map, opt_config)
+                if df is None:
+                    st.stop()
 
-            state.results_df = df
-            state.optimization_summary = summary
-            if summary is not None:
-                state.optimized = summary.optimized > 0
-            state.rejected_eans = _auto_reject_low_res(df)
-            st.rerun()
+                state.results_df = df
+                state.last_valid_eans = set(valid_eans)
+                state.optimization_summary = summary
+                if summary is not None:
+                    state.optimized = summary.optimized > 0
+                state.rejected_eans = _auto_reject_low_res(df)
+                st.rerun()
 
     elif submit and not ean_input.strip():
         st.warning("⚠️ Wklej przynajmniej jeden kod EAN.")
@@ -939,24 +910,8 @@ def _auto_reject_low_res(df: pd.DataFrame) -> set[str]:
 
 def _fetch_urls(
     eans: list[str],
-    demo_mode: bool,
 ) -> Optional[dict[str, dict]]:
     """Fetch EAN→{urls, name} mapping. Returns None on error."""
-    if demo_mode:
-        with st.spinner(
-            f"🧪 [DEMO] Symulowanie odpowiedzi webhooka "
-            f"dla {len(eans)} EAN-ów..."
-        ):
-            simulate_webhook_delay()
-            ean_url_map = get_demo_ean_url_map(eans)
-            logger.info("[DEMO] Wygenerowano mapowanie dla %d EAN-ów", len(ean_url_map))
-        total_urls = sum(len(v["urls"]) for v in ean_url_map.values())
-        st.success(
-            f"✅ [DEMO] Zasymulowano {total_urls} URL-i "
-            f"dla {len(ean_url_map)} EAN-ów."
-        )
-        return ean_url_map
-
     with st.spinner(f"📡 Wysyłanie {len(eans)} EAN-ów do Power Automate..."):
         try:
             ean_url_map = fetch_ean_urls_batch(eans, WEBHOOK_URL_FETCH, BATCH_SIZE)
@@ -1059,7 +1014,7 @@ def _render_results(state: AppState) -> None:
 
     # ── Results card ──────────────────────────────────────────────────
     st.markdown(
-        '<div class="section-card">'
+        '<div class="section-card" id="wyniki-top">'
         '<div class="section-title">'
         '<span class="step-number">2</span> Wyniki analizy'
         "</div>",
@@ -1073,44 +1028,21 @@ def _render_results(state: AppState) -> None:
     if state.optimization_summary and state.optimized:
         _render_optimization_summary(state.optimization_summary)
 
-    # Filters
-    with st.expander("🔧 Filtry", expanded=False):
-        fcol1, fcol2, fcol3 = st.columns(3)
-        with fcol1:
-            all_statuses = df[COL_STATUS].unique().tolist()
-            filter_status = st.multiselect(
-                "Status", options=all_statuses, default=all_statuses
-            )
-        with fcol2:
-            all_extensions = df[COL_EXTENSION].dropna().unique().tolist()
-            has_na = df[COL_EXTENSION].isna().any()
-            ext_options = all_extensions + (["(brak)"] if has_na else [])
-            filter_ext = st.multiselect(
-                "Rozszerzenie", options=ext_options, default=ext_options
-            )
-        with fcol3:
-            show_rejected = st.checkbox("Pokaż odrzucone", value=True)
-            st.caption(
-                f"🔻 Auto-odrzucane: rozdzielczość "
-                f"< {AUTO_REJECT_MIN_WIDTH}×{AUTO_REJECT_MIN_HEIGHT} px"
-            )
+    filtered_df = df.copy()
 
-    # Apply filters
-    mask = df[COL_STATUS].isin(filter_status)
-    if filter_ext:
-        ext_set = {e for e in filter_ext if e != "(brak)"}
-        include_na = "(brak)" in filter_ext
-        mask &= df[COL_EXTENSION].isin(ext_set) | (
-            df[COL_EXTENSION].isna() & include_na
-        )
-    else:
-        mask &= False
-
-    filtered_df = df[mask].copy()
+    page_col, rejected_col, missing_col, _ = st.columns([1, 2, 2, 3])
+    with rejected_col:
+        show_rejected = st.checkbox("Pokaż odrzucone", value=True)
+    with missing_col:
+        show_missing = st.checkbox("Pokaż brak grafik", value=True)
 
     if not show_rejected:
         filtered_df = filtered_df[
             ~filtered_df[COL_EAN].isin(state.rejected_eans)
+        ]
+    if not show_missing:
+        filtered_df = filtered_df[
+            filtered_df[COL_STATUS] != "brak obrazu"
         ]
 
     # Pagination
@@ -1125,7 +1057,6 @@ def _render_results(state: AppState) -> None:
         unsafe_allow_html=True,
     )
 
-    page_col, _ = st.columns([1, 5])
     with page_col:
         page = st.number_input(
             "Strona",
@@ -1163,12 +1094,13 @@ def _render_results(state: AppState) -> None:
                         render_product_card_html(row, is_rejected),
                         unsafe_allow_html=True,
                     )
-                    st.checkbox(
-                        "🗑 Odrzuć",
-                        key=f"rej_{ean_value}",
-                        value=is_rejected,
-                        on_change=make_toggle_callback(ean_value),
-                    )
+                    if str(row.get(COL_STATUS, "")) == "OK":
+                        st.checkbox(
+                            "🗑 Odrzuć",
+                            key=f"rej_{ean_value}",
+                            value=is_rejected,
+                            on_change=make_toggle_callback(ean_value),
+                        )
 
     if total_pages > 1:
         st.caption(f"Strona {page} z {total_pages}")
@@ -1278,31 +1210,22 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
             st.success("✅ Grafiki zostały wysłane do OneDrive!")
 
         if not accepted_ok.empty:
-            export_label = (
-                "🧪 Symuluj wysyłkę" if state.demo_mode else "☁️ Wyślij do OneDrive"
-            )
-            if st.button(export_label, use_container_width=True):
-                if state.demo_mode:
-                    with st.spinner("🧪 [DEMO] Symulowanie eksportu..."):
-                        simulate_webhook_delay()
+            if st.button("☁️ Wyślij do OneDrive", use_container_width=True):
+                with st.spinner("📤 Eksportowanie do OneDrive..."):
+                    try:
+                        result = export_to_onedrive(
+                            accepted_df=accepted_ok,
+                            webhook_url=WEBHOOK_URL_ONEDRIVE,
+                        )
                         state.export_done = True
-                    st.success(f"✅ [DEMO] Zasymulowano wysłanie {len(accepted_ok)} grafik.")
-                else:
-                    with st.spinner("📤 Eksportowanie do OneDrive..."):
-                        try:
-                            result = export_to_onedrive(
-                                accepted_df=accepted_ok,
-                                webhook_url=WEBHOOK_URL_ONEDRIVE,
-                            )
-                            state.export_done = True
-                            st.success(
-                                f"✅ Wysłano {result['sent']} grafik. "
-                                f"Błędy: {result['errors']}."
-                            )
-                            logger.info("Export done: %s", result)
-                        except Exception as exc:
-                            st.error(f"❌ {user_error_message(exc)}")
-                            logger.exception("Błąd export_to_onedrive")
+                        st.success(
+                            f"✅ Wysłano {result['sent']} grafik. "
+                            f"Błędy: {result['errors']}."
+                        )
+                        logger.info("Export done: %s", result)
+                    except Exception as exc:
+                        st.error(f"❌ {user_error_message(exc)}")
+                        logger.exception("Błąd export_to_onedrive")
         else:
             st.info("Brak zaakceptowanych grafik z statusem OK do eksportu.")
 
