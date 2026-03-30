@@ -40,6 +40,10 @@ MAX_EANS = 500
 CARDS_PER_ROW = 4
 ITEMS_PER_PAGE = 20
 TEXTAREA_HEIGHT = 180
+
+# Auto-reject thresholds
+AUTO_REJECT_MIN_WIDTH = 300
+AUTO_REJECT_MIN_HEIGHT = 400
 CSS_FILE = Path(__file__).parent / "styles" / "main.css"
 
 # Column name mapping (internal english ↔ display polish)
@@ -191,43 +195,44 @@ def compute_stats(df: pd.DataFrame, rejected_eans: set[str]) -> AnalysisStats:
 def render_stats_html(s: AnalysisStats) -> str:
     optimized_box = ""
     if s.optimized > 0:
-        optimized_box = f"""
-        <div class="stat-box purple">
-            <div class="stat-icon">⚡</div>
-            <div class="stat-label">Zoptymalizowane</div>
-            <div class="stat-value purple">{s.optimized}</div>
-        </div>"""
+        optimized_box = (
+            '<div class="stat-box purple">'
+            '<div class="stat-icon">⚡</div>'
+            '<div class="stat-label">Zoptymalizowane</div>'
+            f'<div class="stat-value purple">{s.optimized}</div>'
+            "</div>"
+        )
 
-    return f"""
-    <div class="stat-row">
-        <div class="stat-box blue">
-            <div class="stat-icon">📊</div>
-            <div class="stat-label">Łącznie</div>
-            <div class="stat-value blue">{s.total}</div>
-        </div>
-        <div class="stat-box green">
-            <div class="stat-icon">✅</div>
-            <div class="stat-label">OK</div>
-            <div class="stat-value green">{s.ok}</div>
-        </div>
-        <div class="stat-box orange">
-            <div class="stat-icon">📭</div>
-            <div class="stat-label">Brak grafiki</div>
-            <div class="stat-value orange">{s.missing}</div>
-        </div>
-        <div class="stat-box red">
-            <div class="stat-icon">❌</div>
-            <div class="stat-label">Błędy</div>
-            <div class="stat-value red">{s.errors}</div>
-        </div>
-        <div class="stat-box default">
-            <div class="stat-icon">✓</div>
-            <div class="stat-label">Zaakceptowane</div>
-            <div class="stat-value">{s.accepted}</div>
-        </div>
-        {optimized_box}
-    </div>
-    """
+    boxes = (
+        '<div class="stat-box blue">'
+        '<div class="stat-icon">📊</div>'
+        '<div class="stat-label">Łącznie</div>'
+        f'<div class="stat-value blue">{s.total}</div>'
+        "</div>"
+        '<div class="stat-box green">'
+        '<div class="stat-icon">✅</div>'
+        '<div class="stat-label">OK</div>'
+        f'<div class="stat-value green">{s.ok}</div>'
+        "</div>"
+        '<div class="stat-box orange">'
+        '<div class="stat-icon">📭</div>'
+        '<div class="stat-label">Brak grafiki</div>'
+        f'<div class="stat-value orange">{s.missing}</div>'
+        "</div>"
+        '<div class="stat-box red">'
+        '<div class="stat-icon">❌</div>'
+        '<div class="stat-label">Błędy</div>'
+        f'<div class="stat-value red">{s.errors}</div>'
+        "</div>"
+        '<div class="stat-box default">'
+        '<div class="stat-icon">✓</div>'
+        '<div class="stat-label">Zaakceptowane</div>'
+        f'<div class="stat-value">{s.accepted}</div>'
+        "</div>"
+        + optimized_box
+    )
+
+    return '<div class="stat-row">' + boxes + "</div>"
 
 
 # ── Product card renderer ─────────────────────────────────────────────────
@@ -437,6 +442,7 @@ _EXTRA_CSS = """
     border: 1px solid rgba(99, 102, 241, 0.4);
 }
 
+.stat-box.purple { border-color: rgba(99, 102, 241, 0.3); }
 .stat-box.purple::before { background: linear-gradient(135deg, #6366f1, #a855f7); }
 .stat-value.purple { color: #a5b4fc; }
 
@@ -654,31 +660,17 @@ def render_optimization_config_panel(state: AppState) -> OptimizationConfig:
         unsafe_allow_html=True,
     )
 
-    preset_col, status_col = st.columns([2, 3])
-
-    with preset_col:
-        preset_name = st.selectbox(
-            "Preset optymalizacji",
-            options=list(PRESETS.keys()),
-            index=list(PRESETS.keys()).index("E-commerce"),
-            key="opt_preset",
-            help="Wybierz gotowy zestaw ustawień lub dostosuj ręcznie poniżej.",
-        )
-        config = PRESETS[preset_name]
-
-    with status_col:
-        if config.enabled:
-            st.info(
-                f"📐 Max: **{config.max_width}×{config.max_height}** px · "
-                f"💾 Max: **{config.max_file_size_kb} KB** · "
-                f"🎨 JPEG: **{config.jpeg_quality}%** · "
-                f"WebP: **{config.webp_quality}%**"
-            )
-        else:
-            st.info("Optymalizacja wyłączona — grafiki zostaną pobrane bez zmian.")
+    config = PRESETS["E-commerce"]
 
     if config.enabled:
-        with st.expander("⚙️ Ustawienia zaawansowane", expanded=False):
+        with st.expander(
+            f"⚙️ Ustawienia optymalizacji — "
+            f"max {config.max_width}×{config.max_height} px · "
+            f"{config.max_file_size_kb} KB · "
+            f"JPEG {config.jpeg_quality}% · "
+            f"WebP {config.webp_quality}%",
+            expanded=False,
+        ):
             col1, col2, col3 = st.columns(3)
 
             with col1:
@@ -896,6 +888,7 @@ def main() -> None:
             state.optimization_summary = summary
             if summary is not None:
                 state.optimized = summary.optimized > 0
+            state.rejected_eans = _auto_reject_low_res(df)
             st.rerun()
 
     elif submit and not ean_input.strip():
@@ -914,6 +907,34 @@ def main() -> None:
 
 
 # ── Processing helpers ────────────────────────────────────────────────────
+
+
+def _auto_reject_low_res(df: pd.DataFrame) -> set[str]:
+    """
+    Zwraca zbiór EAN-ów, których rozdzielczość jest poniżej progów
+    AUTO_REJECT_MIN_WIDTH × AUTO_REJECT_MIN_HEIGHT.
+    Rozdzielczość odczytywana z kolumny COL_RESOLUTION jako "WxH" lub "W×H".
+    """
+    rejected: set[str] = set()
+    if COL_RESOLUTION not in df.columns or COL_EAN not in df.columns:
+        return rejected
+
+    for _, row in df.iterrows():
+        if str(row.get(COL_STATUS, "")) != "OK":
+            continue
+        res = str(row.get(COL_RESOLUTION, "") or "")
+        # obsługuje zarówno "×" (unicode) jak i "x" (ascii)
+        parts = res.replace("×", "x").lower().split("x")
+        if len(parts) != 2:
+            continue
+        try:
+            w, h = int(parts[0].strip()), int(parts[1].strip())
+        except ValueError:
+            continue
+        if w < AUTO_REJECT_MIN_WIDTH or h < AUTO_REJECT_MIN_HEIGHT:
+            rejected.add(str(row[COL_EAN]))
+
+    return rejected
 
 
 def _fetch_urls(
@@ -1069,6 +1090,10 @@ def _render_results(state: AppState) -> None:
             )
         with fcol3:
             show_rejected = st.checkbox("Pokaż odrzucone", value=True)
+            st.caption(
+                f"🔻 Auto-odrzucane: rozdzielczość "
+                f"< {AUTO_REJECT_MIN_WIDTH}×{AUTO_REJECT_MIN_HEIGHT} px"
+            )
 
     # Apply filters
     mask = df[COL_STATUS].isin(filter_status)

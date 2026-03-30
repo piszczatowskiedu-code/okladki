@@ -144,6 +144,11 @@ html, body, [class*="css"] {
 .stat-box.orange::before { background: var(--warning); }
 .stat-box.red::before { background: var(--danger); }
 .stat-box.default::before { background: var(--text-muted); }
+
+.stat-box.purple { border-color: rgba(99, 102, 241, 0.3); }
+.stat-box.purple::before { background: linear-gradient(135deg, #6366f1, #a855f7); }
+.stat-value.purple { color: #a5b4fc; }
+
 .stat-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
 .stat-label {
     font-size: 0.85rem; font-weight: 600;
