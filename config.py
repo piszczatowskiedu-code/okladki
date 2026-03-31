@@ -23,7 +23,7 @@ BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "50"))          # EAN-ów na jedno
 MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", "10"))         # wątki do pobierania obrazów
 IMAGE_TIMEOUT: float = float(os.getenv("IMAGE_TIMEOUT", "15")) # sekundy timeout HTTP
 MAX_IMAGE_MB: float = float(os.getenv("MAX_IMAGE_MB", "20"))   # maksymalny rozmiar obrazu MB
-HTTP_TIMEOUT: float = float(os.getenv("HTTP_TIMEOUT", "30"))   # timeout do webhooków
+HTTP_TIMEOUT: float = float(os.getenv("HTTP_TIMEOUT", "120"))   # timeout do webhooków
 
 # ── Limity ─────────────────────────────────────────────────────────────────
 MAX_EANS_TOTAL: int = int(os.getenv("MAX_EANS_TOTAL", "5000")) # max EAN-ów jednorazowo
