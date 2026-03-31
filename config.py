@@ -1,39 +1,39 @@
 """
 config.py — Centralna konfiguracja aplikacji EAN Image Manager.
-Ustaw tutaj swoje URL-e webhooków oraz parametry działania.
+Wartości są odczytywane w kolejności:
+  1. Streamlit Secrets (st.secrets) — dla deployment na Streamlit Cloud
+  2. Zmienne środowiskowe (os.getenv) — dla lokalnego developmentu
+  3. Wartości domyślne
 """
 
 import os
 
+
+def _get(key: str, default: str = "") -> str:
+    """Odczytuje wartość z st.secrets, potem z os.getenv, potem default."""
+    try:
+        import streamlit as st
+        val = st.secrets.get(key)
+        if val:
+            return str(val)
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
 # ── Webhooks Power Automate ────────────────────────────────────────────────
-# Wklej tutaj URL-e webhooków z Power Automate LUB ustaw zmienne środowiskowe.
-
-WEBHOOK_URL_FETCH: str = os.getenv(
-    "WEBHOOK_URL_FETCH",
-    "https://default83d026fcd3794cb8ae0271954c599a.f0.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/0202453ec601428cb1376e75296a9f07/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=YiFFTfcQAt1FD6XbyOTjVYjoCOTQbil6Z0eeG0Aen10",
-)
-
-WEBHOOK_URL_ONEDRIVE: str = os.getenv(
-    "WEBHOOK_URL_ONEDRIVE",
-    "https://default83d026fcd3794cb8ae0271954c599a.f0.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/b34e7ec6ba6d4c5baa43e253587f5218/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=iccC8vw-Iumo5w_nVGc9oTr2ZnjCY18DXW1k_HwoVek",
-)
+WEBHOOK_URL_FETCH: str = _get("WEBHOOK_URL_FETCH")
+WEBHOOK_URL_ONEDRIVE: str = _get("WEBHOOK_URL_ONEDRIVE")
 
 # ── Przetwarzanie ──────────────────────────────────────────────────────────
-BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "50"))          # EAN-ów na jedno żądanie
-MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", "10"))         # wątki do pobierania obrazów
-IMAGE_TIMEOUT: float = float(os.getenv("IMAGE_TIMEOUT", "15")) # sekundy timeout HTTP
-MAX_IMAGE_MB: float = float(os.getenv("MAX_IMAGE_MB", "20"))   # maksymalny rozmiar obrazu MB
-HTTP_TIMEOUT: float = float(os.getenv("HTTP_TIMEOUT", "120"))   # timeout do webhooków
+BATCH_SIZE: int = int(_get("BATCH_SIZE", "25"))
+MAX_WORKERS: int = int(_get("MAX_WORKERS", "10"))
+IMAGE_TIMEOUT: float = float(_get("IMAGE_TIMEOUT", "15"))
+MAX_IMAGE_MB: float = float(_get("MAX_IMAGE_MB", "20"))
+HTTP_TIMEOUT: float = float(_get("HTTP_TIMEOUT", "120"))
 
 # ── Limity ─────────────────────────────────────────────────────────────────
-MAX_EANS_TOTAL: int = int(os.getenv("MAX_EANS_TOTAL", "5000")) # max EAN-ów jednorazowo
+MAX_EANS_TOTAL: int = int(_get("MAX_EANS_TOTAL", "5000"))
 
 # ── UI ─────────────────────────────────────────────────────────────────────
 PAGE_TITLE: str = "EAN Image Manager"
-
-# Image optimization defaults
-DEFAULT_MAX_RESOLUTION = 2000      # px (szerokość i wysokość)
-DEFAULT_MAX_FILE_SIZE_KB = 2048    # 2 MB
-DEFAULT_JPEG_QUALITY = 85
-DEFAULT_WEBP_QUALITY = 82
-DEFAULT_PNG_COMPRESS = 6           # 0-9
