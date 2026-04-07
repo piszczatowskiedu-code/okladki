@@ -3,6 +3,7 @@ image_analyzer.py — Pobieranie i analiza grafik.
 Używa wątków do równoległego przetwarzania wielu URL-i.
 Zabezpieczony przed wykryciem: curl_cffi (TLS fingerprint Chrome)
 + fallback na httpx z rotacją nagłówków.
++ OpenLibrary fallback dla brakujących grafik.
 """
 
 from __future__ import annotations
@@ -494,12 +495,14 @@ def analyze_images_parallel(
 ) -> list[dict[str, Any]]:
     """
     Dla każdego EAN pobiera i analizuje wszystkie przypisane URL-e.
+    Automatycznie sprawdza OpenLibrary jako fallback jeśli brak URL z Power Automate.
 
     Strategia pobierania:
     1. curl_cffi z impersonacją Chrome (TLS fingerprint)
     2. Fallback na httpx z rotacją nagłówków
     3. Retry z rosnącym opóźnieniem przy 403/429
     4. Interleaving domen — rozkłada obciążenie
+    5. OpenLibrary fallback dla brakujących grafik
 
     Args:
         eans:              Lista EAN-ów (zachowuje kolejność).
@@ -509,17 +512,31 @@ def analyze_images_parallel(
     Returns:
         Lista słowników — jeden rekord na (EAN, URL).
     """
+    from ean_processor import check_openlibrary_cover  # Import dodany dla OpenLibrary
+    
     # Buduj listę zadań
-    tasks: list[tuple[str, Optional[str], str]] = []
+    tasks: list[tuple[str, Optional[str], str, bool]] = []  # (ean, url, name, from_openlibrary)
+    
     for ean in eans:
         entry = ean_url_map.get(ean, {"urls": [], "name": ""})
         urls = entry.get("urls", [])
         name = entry.get("name", "")
+        
+        # ── NOWE: Fallback do OpenLibrary jeśli brak URL ──
+        openlibrary_used = False
+        if not urls:
+            logger.info(f"🔍 Brak URL dla {ean}, sprawdzam OpenLibrary...")
+            openlibrary_url = check_openlibrary_cover(ean)
+            if openlibrary_url:
+                urls = [openlibrary_url]
+                openlibrary_used = True
+                logger.info(f"✓ Użyto OpenLibrary dla {ean}")
+        
         if urls:
             for url in urls:
-                tasks.append((ean, url, name))
+                tasks.append((ean, url, name, openlibrary_used))
         else:
-            tasks.append((ean, None, name))
+            tasks.append((ean, None, name, False))
 
     total = len(tasks)
     records: list[dict[str, Any]] = []
@@ -529,7 +546,7 @@ def analyze_images_parallel(
     no_image_tasks = [t for t in tasks if t[1] is None]
     url_tasks = [t for t in tasks if t[1] is not None]
 
-    for ean, _, name in no_image_tasks:
+    for ean, _, name, _ in no_image_tasks:
         records.append({
             "ean": ean,
             "name": name,
@@ -540,6 +557,7 @@ def analyze_images_parallel(
             "status": "brak obrazu",
             "błąd": None,
             "_image_bytes": None,
+            "_openlibrary": False,
         })
         done += 1
         if progress_callback:
@@ -549,18 +567,18 @@ def analyze_images_parallel(
         return records
 
     # Interleaving domen
-    domain_groups: dict[str, list[tuple[str, str, str]]] = {}
-    for ean, url, name in url_tasks:
+    domain_groups: dict[str, list[tuple[str, str, str, bool]]] = {}
+    for ean, url, name, openlibrary_used in url_tasks:
         try:
             domain = urlparse(url).netloc
         except Exception:
             domain = "unknown"
-        domain_groups.setdefault(domain, []).append((ean, url, name))
+        domain_groups.setdefault(domain, []).append((ean, url, name, openlibrary_used))
 
     for domain_task_list in domain_groups.values():
         random.shuffle(domain_task_list)
 
-    interleaved: list[tuple[str, str, str]] = []
+    interleaved: list[tuple[str, str, str, bool]] = []
     domain_iters = [iter(tl) for tl in domain_groups.values()]
     while domain_iters:
         next_round = []
@@ -592,7 +610,7 @@ def analyze_images_parallel(
 
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             future_map = {}
-            for task_ean, task_url, task_name in interleaved:
+            for task_ean, task_url, task_name, openlibrary_used in interleaved:
                 _random_delay(20, 150)
                 future = executor.submit(
                     _analyze_single,
@@ -601,13 +619,16 @@ def analyze_images_parallel(
                     task_name,
                     httpx_client,
                 )
-                future_map[future] = (task_ean, task_url, task_name)
+                future_map[future] = (task_ean, task_url, task_name, openlibrary_used)
 
             for future in as_completed(future_map):
                 try:
                     rec = future.result()
+                    # Dodaj flagę OpenLibrary do rekordu
+                    ean, url, name, openlibrary_used = future_map[future]
+                    rec["_openlibrary"] = openlibrary_used
                 except Exception as exc:
-                    ean, url, name = future_map[future]
+                    ean, url, name, openlibrary_used = future_map[future]
                     rec = {
                         "ean": ean,
                         "name": name,
@@ -618,6 +639,7 @@ def analyze_images_parallel(
                         "status": "błąd",
                         "błąd": str(exc),
                         "_image_bytes": None,
+                        "_openlibrary": openlibrary_used,
                     }
                     logger.exception(
                         "Błąd w wątku dla %s / %s", ean, url

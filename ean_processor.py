@@ -1,15 +1,17 @@
 """
-ean_processor.py — Komunikacja z webhookiem Power Automate.
+ean_processor.py — Komunikacja z webhookiem Power Automate + OpenLibrary fallback.
 Wysyła EAN-y batchami i zbiera mapowanie EAN → lista URL-i.
 """
 
 from __future__ import annotations
 
+import io
 import logging
 import time
 from typing import Callable, Optional
 
 import httpx
+from PIL import Image
 
 from config import HTTP_TIMEOUT
 
@@ -78,6 +80,100 @@ def _normalize_results(raw: dict) -> dict[str, dict]:
         else:
             normalized[ean] = {"urls": [], "name": ""}
     return normalized
+
+
+def check_openlibrary_cover(ean: str, timeout: float = 10.0) -> Optional[str]:
+    """
+    Sprawdza czy grafika istnieje w OpenLibrary dla podanego EAN/ISBN.
+    Pobiera i weryfikuje faktyczny obraz (tylko rozmiar L - large).
+    
+    Args:
+        ean: Kod EAN/ISBN (8, 13 lub 14 cyfr)
+        timeout: Timeout żądania HTTP w sekundach
+        
+    Returns:
+        URL grafiki jeśli istnieje, None w przeciwnym razie
+    """
+    # OpenLibrary akceptuje ISBN-10 i ISBN-13
+    # Jeśli EAN ma 14 cyfr, obcinamy pierwszą cyfrę (prefix)
+    isbn = ean
+    if len(ean) == 14:
+        isbn = ean[1:]
+    
+    # Tylko rozmiar L (large) - najwyższa jakość
+    url = f"https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg"
+    
+    logger.debug(f"Sprawdzam OpenLibrary dla EAN: {ean} (ISBN: {isbn}) - {url}")
+    
+    try:
+        # Pobierz obraz z nagłówkami przeglądarki
+        response = httpx.get(
+            url, 
+            timeout=timeout, 
+            follow_redirects=True,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Accept-Language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
+            }
+        )
+        
+        if response.status_code != 200:
+            logger.debug(f"OpenLibrary {url} returned {response.status_code}")
+            return None
+        
+        # Sprawdź Content-Type
+        content_type = response.headers.get('Content-Type', '').lower()
+        if 'image' not in content_type:
+            logger.debug(f"OpenLibrary {url} - nieprawidłowy Content-Type: {content_type}")
+            return None
+        
+        # Pobierz zawartość
+        content = response.content
+        content_size = len(content)
+        
+        # OpenLibrary placeholder ma ~368 bajtów (stary) lub ~2.8KB (nowy)
+        # Prawdziwe okładki są większe (zazwyczaj > 5KB)
+        if content_size < 5000:
+            logger.debug(
+                f"OpenLibrary {url} - plik za mały ({content_size} bytes), "
+                f"prawdopodobnie placeholder"
+            )
+            return None
+        
+        # Weryfikuj że to prawidłowy obraz i sprawdź rozdzielczość
+        try:
+            img = Image.open(io.BytesIO(content))
+            width, height = img.size
+            img_format = img.format or "Unknown"
+            
+            # OpenLibrary placeholder może mieć rozdzielczość 1×1 lub bardzo małą
+            if width < 50 or height < 50:
+                logger.debug(
+                    f"OpenLibrary {url} - obraz za mały ({width}×{height}px), "
+                    f"prawdopodobnie placeholder"
+                )
+                return None
+            
+            logger.info(
+                f"✓ OpenLibrary cover found for {ean}: {url} "
+                f"({content_size} bytes, {width}×{height}px, {img_format})"
+            )
+            return url
+            
+        except Exception as img_err:
+            logger.debug(f"OpenLibrary {url} - błąd weryfikacji obrazu: {img_err}")
+            return None
+            
+    except httpx.TimeoutException:
+        logger.debug(f"OpenLibrary timeout for {ean}")
+        return None
+    except httpx.RequestError as e:
+        logger.debug(f"OpenLibrary request error for {ean}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"OpenLibrary unexpected error for {ean}: {e}")
+        return None
 
 
 def fetch_ean_urls_batch(

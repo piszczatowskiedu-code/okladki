@@ -107,6 +107,9 @@ html, body, [class*="css"] {
     font-size: 0.85rem; font-weight: 700; color: white;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   BADGES - Rozszerzone o OpenLibrary i Optymalizację
+   ═══════════════════════════════════════════════════════════════ */
 .badge {
     display: inline-flex; align-items: center;
     padding: 0.2rem 0.5rem; border-radius: 20px;
@@ -117,6 +120,32 @@ html, body, [class*="css"] {
 .badge-err { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
 .badge-warn { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
 
+/* NOWY: Badge dla optymalizacji */
+.badge-opt {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+/* NOWY: Badge dla OpenLibrary */
+.badge-source {
+    background: rgba(16, 185, 129, 0.15);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    font-size: 0.6rem;
+}
+
+/* Container na wiele badge'ów */
+.card-badges {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   STATYSTYKI
+   ═══════════════════════════════════════════════════════════════ */
 .stat-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -166,6 +195,9 @@ html, body, [class*="css"] {
 .stat-value.orange { color: var(--warning); }
 .stat-value.red { color: var(--danger); }
 
+/* ═══════════════════════════════════════════════════════════════
+   PRZYCISKI
+   ═══════════════════════════════════════════════════════════════ */
 .stButton > button {
     background: var(--accent-gradient) !important;
     color: white !important; border: none !important;
@@ -194,6 +226,9 @@ html, body, [class*="css"] {
     background: rgba(99, 102, 241, 0.1) !important;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   FORMULARZE
+   ═══════════════════════════════════════════════════════════════ */
 .stTextArea textarea {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border-primary) !important;
@@ -243,6 +278,9 @@ html, body, [class*="css"] {
 }
 [data-testid="stMetricLabel"] { color: var(--text-secondary) !important; }
 
+/* ═══════════════════════════════════════════════════════════════
+   KARTY PRODUKTÓW
+   ═══════════════════════════════════════════════════════════════ */
 .product-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border-primary);
@@ -264,6 +302,7 @@ html, body, [class*="css"] {
     width: 100%; height: 600px;
     object-fit: cover; display: block;
     background: var(--bg-tertiary);
+    cursor: zoom-in;
 }
 .card-placeholder {
     width: 100%; height: 600px;
@@ -328,6 +367,61 @@ html, body, [class*="css"] {
     padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   NOWE: Porównanie przed/po optymalizacji
+   ═══════════════════════════════════════════════════════════════ */
+.meta-comparison {
+    margin-bottom: 0.6rem;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 6px;
+    overflow: hidden;
+    padding: 0.4rem 0.5rem;
+}
+
+.meta-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.72rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.meta-table tr + tr td {
+    border-top: 1px solid rgba(255,255,255,0.05);
+    padding-top: 0.3rem;
+    margin-top: 0.3rem;
+}
+
+.meta-label {
+    color: var(--text-muted);
+    padding-right: 0.5rem;
+    white-space: nowrap;
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
+    width: 40%;
+}
+
+.meta-before {
+    color: #94a3b8;
+    text-decoration: line-through;
+    text-decoration-color: rgba(239, 68, 68, 0.5);
+    padding-right: 0.3rem;
+}
+
+.meta-arrow {
+    color: #6366f1;
+    padding: 0 0.3rem;
+    font-weight: 700;
+}
+
+.meta-after {
+    color: #10b981;
+    font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RÓŻNE ELEMENTY UI
+   ═══════════════════════════════════════════════════════════════ */
 .demo-banner {
     background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%);
     border: 1px solid rgba(139, 92, 246, 0.3);
@@ -367,6 +461,40 @@ html, body, [class*="css"] {
     font-family: 'JetBrains Mono', monospace;
 }
 
+/* Panel konfiguracji optymalizacji */
+.opt-config-panel {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem 1.75rem;
+    margin-bottom: 1.5rem;
+}
+
+.opt-config-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #a5b4fc;
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.opt-inline-badge {
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+}
+
 .app-footer {
     margin-top: 3rem; padding: 1.5rem 0;
     border-top: 1px solid var(--border-primary);
@@ -377,6 +505,9 @@ html, body, [class*="css"] {
     font-family: 'JetBrains Mono', monospace; margin: 0;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
 @media (max-width: 1200px) {
     .stat-row { grid-template-columns: repeat(2, 1fr); }
 }
@@ -384,8 +515,19 @@ html, body, [class*="css"] {
     .stat-row { grid-template-columns: 1fr; }
     .header-text h1 { font-size: 1.4rem; }
     .stat-value { font-size: 2rem; }
+    .card-image { height: 400px; }
+    .card-placeholder { height: 400px; }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   SCROLLBARS
+   ═══════════════════════════════════════════════════════════════ */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-secondary); }
-::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 4px; }
+::-webkit-scrollbar-thumb { 
+    background: var(--border-secondary); 
+    border-radius: 4px; 
+}
+::-webkit-scrollbar-thumb:hover { 
+    background: var(--accent-primary); 
+}
