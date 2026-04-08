@@ -193,42 +193,29 @@ def compute_stats(df: pd.DataFrame, rejected_eans: set[str]) -> AnalysisStats:
 
 
 def render_stats_html(s: AnalysisStats) -> str:
-    optimized_box = ""
-    if s.optimized > 0:
-        optimized_box = (
-            '<div class="stat-box purple">'
-            '<div class="stat-icon">⚡</div>'
-            '<div class="stat-label">Zoptymalizowane</div>'
-            f'<div class="stat-value purple">{s.optimized}</div>'
-            "</div>"
+    def make_box(icon: str, label: str, value: str, extra_class: str = "") -> str:
+        return (
+            '<div class="stat-box {extra_class}">'.format(extra_class=extra_class)
+            + '<div class="stat-box-row">'
+            + f'<div class="stat-icon">{icon}</div>'
+            + '<div class="stat-box-content">'
+            + f'<div class="stat-label">{label}</div>'
+            + f'<div class="stat-value {extra_class}">{value}</div>'
+            + '</div>'
+            + '</div>'
+            + '</div>'
         )
 
+    optimized_box = ""
+    if s.optimized > 0:
+        optimized_box = make_box('⚡', 'Zoptymalizowane', str(s.optimized), 'purple')
+
     boxes = (
-        '<div class="stat-box blue">'
-        '<div class="stat-icon">📊</div>'
-        '<div class="stat-label">Łącznie</div>'
-        f'<div class="stat-value blue">{s.total}</div>'
-        "</div>"
-        '<div class="stat-box green">'
-        '<div class="stat-icon">✅</div>'
-        '<div class="stat-label">OK</div>'
-        f'<div class="stat-value green">{s.ok}</div>'
-        "</div>"
-        '<div class="stat-box orange">'
-        '<div class="stat-icon">📭</div>'
-        '<div class="stat-label">Brak grafiki</div>'
-        f'<div class="stat-value orange">{s.missing}</div>'
-        "</div>"
-        '<div class="stat-box red">'
-        '<div class="stat-icon">❌</div>'
-        '<div class="stat-label">Błędy</div>'
-        f'<div class="stat-value red">{s.errors}</div>'
-        "</div>"
-        '<div class="stat-box default">'
-        '<div class="stat-icon">✓</div>'
-        '<div class="stat-label">Zaakceptowane</div>'
-        f'<div class="stat-value">{s.accepted}</div>'
-        "</div>"
+        make_box('📊', 'Łącznie', str(s.total), 'blue')
+        + make_box('✅', 'OK', str(s.ok), 'green')
+        + make_box('📭', 'Brak grafiki', str(s.missing), 'orange')
+        + make_box('❌', 'Błędy', str(s.errors), 'red')
+        + make_box('✓', 'Zaakceptowane', str(s.accepted), 'default')
         + optimized_box
     )
 
@@ -590,22 +577,23 @@ html, body, [class*="css"] {
 .badge-err { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
 .badge-warn { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
 
-.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
-.stat-box { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 1.5rem 1.75rem; position: relative; overflow: hidden; }
-.stat-box::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; }
-.stat-box.blue::before { background: var(--accent-gradient); }
-.stat-box.green::before { background: var(--success); }
-.stat-box.orange::before { background: var(--warning); }
-.stat-box.red::before { background: var(--danger); }
-.stat-box.default::before { background: var(--text-muted); }
-.stat-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
-.stat-label { font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 0.5rem; }
-.stat-value { font-family: 'JetBrains Mono', monospace; font-size: 2.5rem; font-weight: 700; line-height: 1.1; color: var(--text-primary); }
-.stat-value.blue { color: var(--accent-primary); }
-.stat-value.green { color: var(--success); }
-.stat-value.orange { color: var(--warning); }
-.stat-value.red { color: var(--danger); }
-
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
+    .stat-box { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); padding: 0.95rem 1rem; position: relative; overflow: hidden; }
+    .stat-box::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; }
+    .stat-box.blue::before { background: var(--accent-gradient); }
+    .stat-box.green::before { background: var(--success); }
+    .stat-box.orange::before { background: var(--warning); }
+    .stat-box.red::before { background: var(--danger); }
+    .stat-box.default::before { background: var(--text-muted); }
+    .stat-box-row { display: flex; align-items: center; gap: 0.75rem; }
+    .stat-icon { font-size: 1.3rem; line-height: 1; }
+    .stat-box-content { display: flex; flex-direction: column; gap: 0.15rem; }
+    .stat-label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1.2px; margin: 0; }
+    .stat-value { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; line-height: 1.1; color: var(--text-primary); }
+    .stat-value.blue { color: var(--accent-primary); }
+    .stat-value.green { color: var(--success); }
+    .stat-value.orange { color: var(--warning); }
+    .stat-value.red { color: var(--danger); }
 .stButton > button { background: var(--accent-gradient) !important; color: white !important; border: none !important; font-weight: 600 !important; border-radius: var(--radius-sm) !important; padding: 0.65rem 1.5rem !important; font-size: 0.9rem !important; }
 .stDownloadButton > button { background: var(--bg-tertiary) !important; color: var(--text-primary) !important; border: 1px solid var(--border-secondary) !important; font-weight: 600 !important; border-radius: var(--radius-sm) !important; }
 .stTextArea textarea { background: var(--bg-secondary) !important; border: 1px solid var(--border-primary) !important; border-radius: var(--radius-md) !important; color: var(--text-primary) !important; font-family: 'JetBrains Mono', monospace !important; font-size: 0.85rem !important; padding: 1rem !important; }
@@ -656,10 +644,10 @@ def render_optimization_config_panel(state: AppState) -> OptimizationConfig:
 
     if config.enabled:
         with st.expander(
-            f"⚙️ Ustawienia optymalizacji — "
-            f"max {config.max_width}×{config.max_height} px · "
-            f"{config.max_file_size_kb} KB · "
-            f"JPEG {config.jpeg_quality}% · "
+            f"Ustawienia optymalizacji: "
+            f"max {config.max_width}×{config.max_height} px - "
+            f"{config.max_file_size_kb} KB - "
+            f"JPEG {config.jpeg_quality}% - "
             f"WebP {config.webp_quality}%",
             expanded=False,
         ):
@@ -745,7 +733,6 @@ def main() -> None:
                 <div class="header-icon">🖼️</div>
                 <div class="header-text">
                     <h1>Pobieranie okładek na podstawie EAN</h1>
-                    <p>-</p>
                 </div>
             </div>
         </div>
@@ -789,7 +776,7 @@ def main() -> None:
 
     col_btn, col_info = st.columns([1, 4])
     with col_btn:
-        submit = st.button("🚀 Wyślij i pobierz", use_container_width=True)
+        submit = st.button("Wyślij i pobierz", use_container_width=True)
     with col_info:
         if ean_input.strip():
             valid_preview, invalid_preview = parse_eans(
@@ -801,8 +788,6 @@ def main() -> None:
             if invalid_preview:
                 parts.append(f"⚠️ {len(invalid_preview)} nieprawidłowych")
             parts.append(f"Batch size: {BATCH_SIZE}")
-            if opt_config.enabled:
-                parts.append(f"⚡ Optymalizacja aktywna")
             st.caption(" · ".join(parts))
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -916,7 +901,7 @@ def _fetch_urls(
     eans: list[str],
 ) -> Optional[dict[str, dict]]:
     """Fetch EAN→{urls, name} mapping. Returns None on error."""
-    with st.spinner(f"📡 Wysyłanie {len(eans)} EAN-ów do Power Automate..."):
+    with st.spinner(f"Wysyłanie {len(eans)} EAN-ów do Power Automate..."):
         try:
             ean_url_map = fetch_ean_urls_batch(eans, WEBHOOK_URL_FETCH, BATCH_SIZE)
             logger.info("Otrzymano mapowanie dla %d EAN-ów", len(ean_url_map))
@@ -1207,15 +1192,15 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
     export_col, missing_col = st.columns(2, gap="large")
 
     with export_col:
-        st.markdown("#### ☁️ Eksport zaakceptowanych grafik")
+        st.markdown("#### Eksport zaakceptowanych grafik")
         st.metric("Zaakceptowane grafiki (OK)", len(accepted_ok))
 
         if state.export_done:
-            st.success("✅ Grafiki zostały wysłane do OneDrive!")
+            st.success("Grafiki zostały wysłane do OneDrive!")
 
         if not accepted_ok.empty:
-            if st.button("☁️ Wyślij do OneDrive", use_container_width=True):
-                with st.spinner("📤 Eksportowanie do OneDrive..."):
+            if st.button("Wyślij do OneDrive", use_container_width=True):
+                with st.spinner("Eksportowanie do OneDrive..."):
                     try:
                         result = export_to_onedrive(
                             accepted_df=accepted_ok,
@@ -1234,7 +1219,7 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
             st.info("Brak zaakceptowanych grafik z statusem OK do eksportu.")
 
     with missing_col:
-        st.markdown("#### 📭 EAN-y bez grafiki / odrzucone")
+        st.markdown("#### EAN-y bez grafiki / odrzucone")
 
         if missing_eans_list:
             missing_eans_text = "\n".join(missing_eans_list)
@@ -1251,7 +1236,7 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
                 f"""
                 <div class="missing-eans-box">
                     <div class="missing-eans-header">
-                        📭 Lista do uzupełnienia:
+                        Lista do uzupełnienia:
                         <span class="missing-eans-count">{len(missing_eans_list)}</span>
                         EAN-ów
                         <span style="font-size:0.75rem;opacity:0.7;margin-left:0.5rem">({breakdown_str})</span>
