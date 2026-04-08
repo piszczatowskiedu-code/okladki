@@ -1233,18 +1233,6 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
         else:
             st.info("Brak zaakceptowanych grafik z statusem OK do eksportu.")
 
-        st.markdown("---")
-        export_df = df.rename(columns=DISPLAY_LABELS)
-        excel_buf = io.BytesIO()
-        export_df.to_excel(excel_buf, index=False, engine="openpyxl")
-        st.download_button(
-            "⬇️ Pobierz Excel z wynikami",
-            data=excel_buf.getvalue(),
-            file_name="ean_images_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
     with missing_col:
         st.markdown("#### 📭 EAN-y bez grafiki / odrzucone")
 
@@ -1275,7 +1263,7 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
 
             st.code(missing_eans_text, language=None)
 
-            btn1, btn2, btn3 = st.columns(3)
+            btn1, btn2 = st.columns(2)
             with btn1:
                 st.button(
                     "📋 Skopiuj EAN-y",
@@ -1290,18 +1278,6 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
                     data=missing_eans_text.encode("utf-8"),
                     file_name="brakujace_eany.txt",
                     mime="text/plain",
-                    use_container_width=True,
-                )
-            with btn3:
-                missing_excel_buf = io.BytesIO()
-                pd.DataFrame({COL_EAN: missing_eans_list}).rename(
-                    columns=DISPLAY_LABELS
-                ).to_excel(missing_excel_buf, index=False, engine="openpyxl")
-                st.download_button(
-                    "⬇️ Pobierz jako Excel",
-                    data=missing_excel_buf.getvalue(),
-                    file_name="brakujace_eany.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                 )
         else:
