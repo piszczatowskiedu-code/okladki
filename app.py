@@ -927,9 +927,9 @@ def _analyze_and_optimize(
     from image_optimizer import optimize_dataframe
 
     # Step 1: Download & analyze
-    spinner_msg = "🔍 Pobieranie i analiza grafik..."
+    spinner_msg = "Pobieranie i analiza grafik..."
     if opt_config.enabled:
-        spinner_msg = "🔍 Pobieranie, analiza i optymalizacja grafik w locie..."
+        spinner_msg = "Pobieranie, analiza i optymalizacja grafik w locie..."
 
     with st.spinner(spinner_msg):
         progress_bar = st.progress(0)
@@ -1103,7 +1103,7 @@ def _render_results(state: AppState) -> None:
 def _render_optimization_summary(summary: OptimizationSummary) -> None:
     """Displays a compact optimization summary inline in results."""
     with st.expander(
-        f"⚡ Podsumowanie optymalizacji — zaoszczędzono **{summary.total_saved_kb:.0f} KB** "
+        f"Podsumowanie optymalizacji — zaoszczędzono **{summary.total_saved_kb:.0f} KB** "
         f"({summary.total_saved_pct:.1f}%)",
         expanded=False,
     ):
@@ -1270,7 +1270,6 @@ def _render_export(df: pd.DataFrame, state: AppState) -> None:
             st.markdown(
                 """
                 <div style="text-align:center;padding:2rem;color:var(--text-muted)">
-                    <div style="font-size:3rem;margin-bottom:0.5rem">✨</div>
                     <p>Nie znaleziono żadnych EAN-ów bez grafiki.</p>
                 </div>
                 """,
