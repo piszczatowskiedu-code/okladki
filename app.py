@@ -336,7 +336,7 @@ def _render_before_after_meta(
     if res_before and res_after and res_before != res_after:
         rows_html += (
             f"<tr>"
-            f"<td class='meta-label'>📐 Rozdzielczość</td>"
+            f"<td class='meta-label'>📐</td>"
             f"<td class='meta-before'>{res_before}</td>"
             f"<td class='meta-arrow'>→</td>"
             f"<td class='meta-after'>{res_after}</td>"
@@ -345,7 +345,7 @@ def _render_before_after_meta(
     elif res_after:
         rows_html += (
             f"<tr>"
-            f"<td class='meta-label'>📐 Rozdzielczość</td>"
+            f"<td class='meta-label'>📐</td>"
             f"<td class='meta-before' colspan='3'>{res_after}</td>"
             f"</tr>"
         )
@@ -353,7 +353,7 @@ def _render_before_after_meta(
     if size_before and size_after and size_before != size_after:
         rows_html += (
             f"<tr>"
-            f"<td class='meta-label'>💾 Rozmiar</td>"
+            f"<td class='meta-label'>💾</td>"
             f"<td class='meta-before'>{size_before}</td>"
             f"<td class='meta-arrow'>→</td>"
             f"<td class='meta-after'>{size_after}</td>"
@@ -362,7 +362,7 @@ def _render_before_after_meta(
     elif size_after:
         rows_html += (
             f"<tr>"
-            f"<td class='meta-label'>💾 Rozmiar</td>"
+            f"<td class='meta-label'>💾</td>"
             f"<td class='meta-before' colspan='3'>{size_after}</td>"
             f"</tr>"
         )
@@ -370,7 +370,7 @@ def _render_before_after_meta(
     if ext_before and ext_after and ext_before != ext_after:
         rows_html += (
             f"<tr>"
-            f"<td class='meta-label'>🗂 Format</td>"
+            f"<td class='meta-label'>🗂</td>"
             f"<td class='meta-before'>{ext_before}</td>"
             f"<td class='meta-arrow'>→</td>"
             f"<td class='meta-after'>{ext_after}</td>"
@@ -379,7 +379,7 @@ def _render_before_after_meta(
     elif ext_after:
         rows_html += (
             f"<tr>"
-            f"<td class='meta-label'>🗂 Format</td>"
+            f"<td class='meta-label'>🗂</td>"
             f"<td class='meta-before' colspan='3'>{ext_after}</td>"
             f"</tr>"
         )
