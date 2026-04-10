@@ -300,8 +300,6 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
             f"<div class='card-meta'>{''.join(meta_parts)}</div>" if meta_parts else ""
         )
 
-    link_html = ""
-
     # Error line
     error_html = ""
     if err and status != "brak obrazu":
@@ -322,7 +320,6 @@ def render_product_card_html(row: pd.Series, is_rejected: bool) -> str:
         f"    </div>"
         f"    {name_html}"
         f"    {meta_html}"
-        f"    {link_html}"
         f"    {error_html}"
         f"  </div>"
         f"</div>"
@@ -408,7 +405,6 @@ def load_css() -> None:
         )
         css_text = _FALLBACK_CSS + _EXTRA_CSS
     st.markdown(f"<style>{css_text}</style>", unsafe_allow_html=True)
-    st.markdown(_LIGHTBOX_JS, unsafe_allow_html=True)
 
 
 # Additional CSS for new elements (appended to existing CSS)
@@ -512,8 +508,6 @@ _EXTRA_CSS = """
     vertical-align: middle;
 }
 """
-
-_LIGHTBOX_JS = ""
 
 _FALLBACK_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
@@ -924,8 +918,6 @@ def _analyze_and_optimize(
     Download, analyze, and immediately optimize images inline.
     Returns (normalized DataFrame, OptimizationSummary) or (None, None) on error.
     """
-    from image_optimizer import optimize_dataframe
-
     # Step 1: Download & analyze
     spinner_msg = "Pobieranie i analiza grafik..."
     if opt_config.enabled:
