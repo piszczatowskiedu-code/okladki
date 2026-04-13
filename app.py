@@ -789,7 +789,7 @@ def _render_results(state: AppState) -> None:
 
     filtered_df = df.copy()
 
-    page_col, rejected_col, missing_col, _ = st.columns([1, 2, 2, 3])
+    rejected_col, missing_col, _ = st.columns([2, 2, 4])
     with rejected_col:
         show_rejected = st.checkbox("Pokaż odrzucone", value=True)
     with missing_col:
@@ -804,27 +804,32 @@ def _render_results(state: AppState) -> None:
             filtered_df[COL_STATUS] != "brak obrazu"
         ]
 
-    # Pagination
+    # Pagination state
     total_items = len(filtered_df)
     total_pages = max(1, (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
 
-    st.markdown(
-        f"<p style='color:var(--text-secondary);font-size:0.85rem;"
-        f"margin:1rem 0'>Wyświetlono "
-        f"<strong style='color:var(--text-primary)'>{total_items}</strong>"
-        f" grafik</p>",
-        unsafe_allow_html=True,
-    )
+    # Clamp page stored in session_state when filters change
+    _page_key = "pagination_page"
+    if _page_key not in st.session_state:
+        st.session_state[_page_key] = 1
+    page = max(1, min(st.session_state[_page_key], total_pages))
+    st.session_state[_page_key] = page
 
-    with page_col:
-        page = st.number_input(
-            "Strona",
-            min_value=1,
-            max_value=total_pages,
-            value=1,
-            step=1,
-            label_visibility="collapsed",
-            help=f"Strona 1–{total_pages} ({ITEMS_PER_PAGE}/stronę)",
+    # Top info bar — only page/total text, no navigation control
+    info_col, count_col = st.columns([3, 5])
+    with info_col:
+        if total_pages > 1:
+            st.markdown(
+                f"<p style='color:var(--text-secondary);font-size:0.85rem;margin:1rem 0'>"
+                f"Strona <strong style='color:var(--text-primary)'>{page}</strong>"
+                f" z <strong style='color:var(--text-primary)'>{total_pages}</strong></p>",
+                unsafe_allow_html=True,
+            )
+    with count_col:
+        st.markdown(
+            f"<p style='color:var(--text-secondary);font-size:0.85rem;margin:1rem 0'>"
+            f"Wyświetlono <strong style='color:var(--text-primary)'>{total_items}</strong> grafik</p>",
+            unsafe_allow_html=True,
         )
 
     start_idx = (page - 1) * ITEMS_PER_PAGE
@@ -861,8 +866,42 @@ def _render_results(state: AppState) -> None:
                             on_change=make_toggle_callback(ean_value),
                         )
 
+    # Bottom pagination control
     if total_pages > 1:
-        st.caption(f"Strona {page} z {total_pages}")
+        st.markdown(
+            "<div style='margin-top:1.5rem;border-top:1px solid var(--border);padding-top:1rem'></div>",
+            unsafe_allow_html=True,
+        )
+        pg_prev, pg_input, pg_next, pg_info = st.columns([1, 2, 1, 4])
+        with pg_prev:
+            if st.button("← Poprzednia", use_container_width=True, disabled=(page <= 1), key="btn_prev_page"):
+                st.session_state[_page_key] = page - 1
+                st.rerun()
+        with pg_input:
+            new_page = st.number_input(
+                "Przejdź do strony",
+                min_value=1,
+                max_value=total_pages,
+                value=page,
+                step=1,
+                key="num_page_input",
+                help=f"Strona 1–{total_pages} ({ITEMS_PER_PAGE} kart/stronę)",
+            )
+            if new_page != page:
+                st.session_state[_page_key] = int(new_page)
+                st.rerun()
+        with pg_next:
+            if st.button("Następna →", use_container_width=True, disabled=(page >= total_pages), key="btn_next_page"):
+                st.session_state[_page_key] = page + 1
+                st.rerun()
+        with pg_info:
+            st.markdown(
+                f"<p style='color:var(--text-secondary);font-size:0.85rem;line-height:2.4rem;margin:0'>"
+                f"Strona <strong style='color:var(--text-primary)'>{page}</strong>"
+                f" z <strong style='color:var(--text-primary)'>{total_pages}</strong>"
+                f" &nbsp;·&nbsp; {ITEMS_PER_PAGE} kart/stronę</p>",
+                unsafe_allow_html=True,
+            )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
