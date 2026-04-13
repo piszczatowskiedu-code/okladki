@@ -789,10 +789,14 @@ def _render_results(state: AppState) -> None:
 
     filtered_df = df.copy()
 
-    rejected_col, missing_col, _ = st.columns([2, 2, 4])
-    with rejected_col:
+    # ── Compact top bar: all elements in one single row ────────────────
+    # st.empty() lets us fill the count column AFTER filtering (chicken-and-egg fix).
+    _count_col, _cb_col1, _cb_col2, _spacer = st.columns([2.8, 1.6, 1.8, 4], gap="small")
+    _count_placeholder = _count_col.empty()
+
+    with _cb_col1:
         show_rejected = st.checkbox("Pokaż odrzucone", value=True)
-    with missing_col:
+    with _cb_col2:
         show_missing = st.checkbox("Pokaż brak grafik", value=True)
 
     if not show_rejected:
@@ -815,22 +819,19 @@ def _render_results(state: AppState) -> None:
     page = max(1, min(st.session_state[_page_key], total_pages))
     st.session_state[_page_key] = page
 
-    # Top info bar — only page/total text, no navigation control
-    info_col, count_col = st.columns([3, 5])
-    with info_col:
-        if total_pages > 1:
-            st.markdown(
-                f"<p style='color:var(--text-secondary);font-size:0.85rem;margin:1rem 0'>"
-                f"Strona <strong style='color:var(--text-primary)'>{page}</strong>"
-                f" z <strong style='color:var(--text-primary)'>{total_pages}</strong></p>",
-                unsafe_allow_html=True,
-            )
-    with count_col:
-        st.markdown(
-            f"<p style='color:var(--text-secondary);font-size:0.85rem;margin:1rem 0'>"
-            f"Wyświetlono <strong style='color:var(--text-primary)'>{total_items}</strong> grafik</p>",
-            unsafe_allow_html=True,
-        )
+    # Now fill the placeholder — same visual row as the checkboxes
+    _page_info = (
+        f" &nbsp;·&nbsp; str.&nbsp;<strong style='color:var(--text-primary)'>{page}</strong>"
+        f"&thinsp;/&thinsp;<strong style='color:var(--text-primary)'>{total_pages}</strong>"
+        if total_pages > 1 else ""
+    )
+    _count_placeholder.markdown(
+        f"<p style='color:var(--text-secondary);font-size:0.82rem;"
+        f"margin:0;line-height:1.6rem;white-space:nowrap;'>"
+        f"Wyświetlono&nbsp;<strong style='color:var(--text-primary)'>{total_items}</strong>&nbsp;grafik"
+        f"{_page_info}</p>",
+        unsafe_allow_html=True,
+    )
 
     start_idx = (page - 1) * ITEMS_PER_PAGE
     page_df = filtered_df.iloc[start_idx : start_idx + ITEMS_PER_PAGE]
